@@ -40,9 +40,30 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Build debug APK
-        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
+        run: |
+          set -o pipefail
+          ./gradlew :app:assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore
+
+      # 编译失败时把日志尾部输出为 GitHub annotation，方便在未登录的情况下排查
+      - name: Show failure
+        if: failure()
+        run: |
+          tail -n 100 build.log | while IFS= read -r line; do
+            line="${line//'%'/'%25'}"
+            line="${line//$'\r'/}"
+            echo "::error::${line}"
+          done
 
       - name: Upload APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: freedomplus-debug
