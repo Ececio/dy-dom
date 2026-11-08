@@ -52,15 +52,21 @@ jobs:
           path: build.log
           if-no-files-found: ignore
 
-      # 编译失败时把日志尾部输出为 GitHub annotation，方便在未登录的情况下排查
+      # 编译失败时把完整日志输出为 GitHub annotation，方便在未登录 API 的情况下排查
       - name: Show failure
         if: failure()
         run: |
-          tail -n 100 build.log | while IFS= read -r line; do
-            line="${line//'%'/'%25'}"
-            line="${line//$'\r'/}"
-            echo "::error::${line}"
-          done
+          python3 - <<'PY'
+          from pathlib import Path
+
+          try:
+              data = Path("build.log").read_text(encoding="utf-8", errors="replace")
+          except FileNotFoundError:
+              data = "build.log not found"
+
+          data = data.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+          print("::error::" + data[:60000])
+          PY
 
       - name: Upload APK
         if: success()
