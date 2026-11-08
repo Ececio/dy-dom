@@ -1,0 +1,50 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # 仓库里的 ktutils / xpler 没有以 git submodule 形式提交（.gitmodules 存在但缺少 gitlink），
+      # 这里兜底克隆；如果以后正确添加了 submodule，这一步会自动跳过。
+      - name: Clone missing dependencies
+        run: |
+          if [ ! -f ktutils/build.gradle ]; then
+            git clone --depth 1 https://github.com/GangJust/ktutils.git ktutils
+          fi
+          if [ ! -f xpler/build.gradle.kts ]; then
+            git clone --depth 1 https://github.com/ThatWorld/xpler.git xpler
+          fi
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      - name: Build debug APK
+        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: freedomplus-debug
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
