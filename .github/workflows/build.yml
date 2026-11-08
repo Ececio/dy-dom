@@ -23,10 +23,12 @@ jobs:
       - name: Clone missing dependencies
         run: |
           if [ ! -f ktutils/build.gradle ]; then
-            git clone --depth 1 https://github.com/GangJust/ktutils.git ktutils
+            git clone https://github.com/GangJust/ktutils.git ktutils
+            git -C ktutils checkout 5a3da74659d110da34d7f7560a769deabd645962
           fi
           if [ ! -f xpler/build.gradle.kts ]; then
-            git clone --depth 1 https://github.com/ThatWorld/xpler.git xpler
+            git clone https://github.com/ThatWorld/xpler.git xpler
+            git -C xpler checkout 6c134681823da7483a20659b560bc44256f83761
           fi
 
       - name: Set up JDK 17
