@@ -3,6 +3,14 @@ plugins {
     id "org.jetbrains.kotlin.android"
 }
 
+// Release 签名配置：优先使用环境变量（CI 中由 GitHub Secrets 注入）。
+// 未配置时回退到 debug 签名，保证产出的 release APK 可安装。
+def releaseStorePassword = System.getenv("RELEASE_STORE_PASSWORD")
+def releaseKeyAlias = System.getenv("RELEASE_KEY_ALIAS")
+def releaseKeyPassword = System.getenv("RELEASE_KEY_PASSWORD") ?: releaseStorePassword
+def releaseStoreFile = System.getenv("RELEASE_STORE_FILE") ?: rootProject.file("keystore.jks").absolutePath
+def hasReleaseSigning = releaseStorePassword && releaseKeyAlias && file(releaseStoreFile).exists()
+
 android {
     namespace "io.github.fplus"
     compileSdk 34
@@ -33,10 +41,21 @@ android {
     aaptOptions {
         additionalParameters '--allow-reserved-package-id', '--package-id', '0x64'
     }
+    signingConfigs {
+        release {
+            if (hasReleaseSigning) {
+                storeFile file(releaseStoreFile)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
     buildTypes {
         release {
             minifyEnabled true
             shrinkResources true
+            signingConfig(hasReleaseSigning ? signingConfigs.release : signingConfigs.debug)
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
         }
 

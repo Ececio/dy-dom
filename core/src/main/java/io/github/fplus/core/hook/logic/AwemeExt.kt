@@ -11,19 +11,17 @@ fun Aweme.createDate(): String {
 
 /**
  * 读取作品自带的 poi_info，地址优先级:
- * poi_info.address_info(province/city/district) > poi_info.poi_name > Aweme.city > Aweme.ipAttribution
+ * poi_info.address_info > poi_info > poi_info.poi_name > Aweme.city > Aweme.ipAttribution
+ *
+ * address_info 依次输出:
+ * province city district city_code ad_code_v2 country country_code
  */
 suspend fun Aweme.cityInfo(): String {
     val poiInfo = getFieldValue("poiInfo", "poi_info")
     val addressInfo = poiInfo?.getFieldValue("addressInfo", "address_info")
 
-    if (addressInfo != null) {
-        val area = listOf("province", "city", "district")
-            .mapNotNull { addressInfo.getTextValue(it) }
-            .distinct()
-            .joinToString(" ")
-        if (area.isNotBlank()) return area
-    }
+    addressInfo?.addressText()?.takeIf { it.isNotBlank() }?.let { return it }
+    poiInfo?.addressText()?.takeIf { it.isNotBlank() }?.let { return it }
 
     poiInfo?.getTextValue("poiName", "poi_name", "name")?.let { return it }
 
@@ -33,16 +31,33 @@ suspend fun Aweme.cityInfo(): String {
     return "未知"
 }
 
+private val ADDRESS_FIELDS = listOf(
+    listOf("province"),
+    listOf("city"),
+    listOf("district"),
+    listOf("cityCode", "city_code"),
+    listOf("adCodeV2", "ad_code_v2"),
+    listOf("country"),
+    listOf("countryCode", "country_code"),
+)
+
+private fun Any.addressText(): String {
+    return ADDRESS_FIELDS
+        .mapNotNull { names -> getTextValue(*names.toTypedArray()) }
+        .joinToString(" ")
+}
+
 private fun Any.getFieldValue(vararg names: String): Any? {
     var type: Class<*>? = javaClass
     while (type != null) {
         val current = type
         for (name in names) {
             val field = runCatching { current.getDeclaredField(name) }.getOrNull() ?: continue
-            return runCatching {
+            val value = runCatching {
                 field.isAccessible = true
                 field.get(this)
             }.getOrNull()
+            if (value != null) return value
         }
         type = current.superclass
     }
@@ -50,7 +65,7 @@ private fun Any.getFieldValue(vararg names: String): Any? {
 }
 
 private fun Any.getTextValue(vararg names: String): String? {
-    return (getFieldValue(*names) as? String)?.takeIf { it.isNotBlank() }
+    return getFieldValue(*names)?.toString()?.takeIf { it.isNotBlank() }
 }
 
 fun Aweme.getH265VideoUrlList(): List<String> {

@@ -5,9 +5,21 @@ on:
     branches: [ main, master ]
     tags: [ 'v*' ]
   workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build type'
+        required: true
+        default: release
+        type: choice
+        options:
+          - release
+          - debug
 
 permissions:
   contents: write
+
+env:
+  BUILD_TYPE: ${{ github.event.inputs.build_type || 'release' }}
 
 jobs:
   build:
@@ -42,24 +54,52 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      - name: Build debug APK
-        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
+      # 配置 release 签名：在仓库 Secrets 中设置 KEYSTORE_BASE64 / KEYSTORE_PASSWORD /
+      # KEY_ALIAS / KEY_PASSWORD 即可使用自己的证书；未设置时使用 debug 证书签名。
+      - name: Configure signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > keystore.jks
+            {
+              echo "RELEASE_STORE_FILE=$GITHUB_WORKSPACE/keystore.jks"
+              echo "RELEASE_STORE_PASSWORD=$KEYSTORE_PASSWORD"
+              echo "RELEASE_KEY_ALIAS=$KEY_ALIAS"
+              echo "RELEASE_KEY_PASSWORD=${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"
+            } >> "$GITHUB_ENV"
+            echo "Release signing: custom keystore"
+          else
+            echo "Release signing: debug keystore (KEYSTORE_* secrets not configured)"
+          fi
+
+      - name: Build APK
+        run: |
+          if [ "$BUILD_TYPE" = "debug" ]; then
+            ./gradlew :app:assembleDebug --no-daemon --stacktrace
+          else
+            ./gradlew :app:assembleRelease --no-daemon --stacktrace
+          fi
 
       - name: Upload APK
         uses: actions/upload-artifact@v7
         with:
-          name: freedomplus-debug
-          path: app/build/outputs/apk/debug/*.apk
+          name: freedomplus-${{ env.BUILD_TYPE }}
+          path: app/build/outputs/apk/${{ env.BUILD_TYPE }}/*.apk
           if-no-files-found: error
 
-      # 推送 v* 标签时自动创建 GitHub Release 并上传 APK
+      # 推送 v* 标签时自动创建 GitHub Release 并上传 release APK
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p release
-          cp app/build/outputs/apk/debug/*.apk "release/FreedomPlus_${GITHUB_REF_NAME#v}_debug.apk"
+          cp app/build/outputs/apk/release/*.apk "release/FreedomPlus_${GITHUB_REF_NAME#v}_release.apk"
           gh release create "${GITHUB_REF_NAME}" release/*.apk \
             --title "FreedomPlus ${GITHUB_REF_NAME#v}" \
-            --generate-notes
+            --generate-notes \
+            || gh release upload "${GITHUB_REF_NAME}" release/*.apk --clobber
