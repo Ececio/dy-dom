@@ -14,12 +14,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
       # 仓库里的 ktutils / xpler 没有以 git submodule 形式提交（.gitmodules 存在但缺少 gitlink），
-      # 这里兜底克隆；如果以后正确添加了 submodule，这一步会自动跳过。
+      # 这里兜底克隆并固定版本；如果以后正确添加了 submodule，这一步会自动跳过。
       - name: Clone missing dependencies
         run: |
           if [ ! -f ktutils/build.gradle ]; then
@@ -32,7 +32,7 @@ jobs:
           fi
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
@@ -42,37 +42,10 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Build debug APK
-        run: |
-          set -o pipefail
-          ./gradlew :app:assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
-
-      - name: Upload build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: build.log
-          if-no-files-found: ignore
-
-      # 编译失败时把完整日志输出为 GitHub annotation，方便在未登录 API 的情况下排查
-      - name: Show failure
-        if: failure()
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          try:
-              data = Path("build.log").read_text(encoding="utf-8", errors="replace")
-          except FileNotFoundError:
-              data = "build.log not found"
-
-          data = data.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
-          print("::error::" + data[:60000])
-          PY
+        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK
-        if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: freedomplus-debug
           path: app/build/outputs/apk/debug/*.apk
