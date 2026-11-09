@@ -91,27 +91,20 @@ jobs:
           path: app/build/outputs/apk/${{ env.BUILD_TYPE }}/*.apk
           if-no-files-found: error
 
-      # release 构建成功后自动发布到 GitHub Release；版本号取自 app/build.gradle。
-      # 同一版本重复构建会覆盖 Release 中的 APK；版本号变更后会自动创建新的 Release。
+      # 推送 v* 标签时自动创建 GitHub Release 并上传 release APK
       - name: Publish release
-        if: env.BUILD_TYPE == 'release'
+        if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION=$(grep -m1 'versionName' app/build.gradle | sed -E 's/.*versionName[[:space:]]+"([^"]+)".*/\1/')
-          TAG="v${VERSION}"
-          ASSET="FreedomPlus_${VERSION}_release.apk"
+          TAG="${GITHUB_REF_NAME}"
+          ASSET="FreedomPlus_${TAG#v}_release.apk"
           mkdir -p release
           cp app/build/outputs/apk/release/*.apk "release/$ASSET"
-
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "release/$ASSET" --clobber
-          else
-            gh release create "$TAG" "release/$ASSET" \
-              --title "FreedomPlus ${VERSION}" \
-              --generate-notes \
-              --target "$GITHUB_SHA"
-          fi
+          gh release create "$TAG" "release/$ASSET" \
+            --title "FreedomPlus ${TAG#v}" \
+            --generate-notes \
+            || gh release upload "$TAG" "release/$ASSET" --clobber
 
           # 清理该 Release 下旧构建残留的其他 APK（例如之前上传的 debug 包）
           gh release view "$TAG" --json assets --jq '.assets[].name' | while read -r old; do
