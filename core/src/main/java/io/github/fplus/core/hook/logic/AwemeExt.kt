@@ -39,6 +39,7 @@ suspend fun Aweme.videoInfoText(): String {
 
     aid?.takeIf { it.isNotBlank() }?.let { lines += "作品ID: $it" }
     lines += "视频属地: ${cityInfo()}"
+    areaApiInfo()?.let { lines += "区划接口: $it" }
     lines += "发布时间: ${createDate()}"
 
     ipAttribution?.takeIf { it.isNotBlank() }?.let { lines += "IP属地: $it" }
@@ -80,22 +81,12 @@ suspend fun Aweme.videoInfoText(): String {
 }
 
 /**
- * 读取作品自带的 poi_info，并优先用行政区划代码查询民政部地名信息库:
- * https://dmfw.mca.gov.cn/9095/xzqh/getList?code=510100
- *
- * 查询失败时回退到 poi_info 地址名称 > poi_name > Aweme.city > ipAttribution。
+ * 读取作品自带的 poi_info 地址，优先级:
+ * address_info(province/city/district) > poi_name > Aweme.city > ipAttribution。
  */
-suspend fun Aweme.cityInfo(): String {
+fun Aweme.cityInfo(): String {
     val info = poiInfo()
     val addressInfo = info?.getFieldValue("addressInfo", "address_info")
-
-    val code = addressInfo?.getTextValue("cityCode", "city_code").asAreaCode()
-        ?: addressInfo?.getTextValue("adCodeV2", "ad_code_v2", "adCode").asAreaCode()
-        ?: getTextValue("city").asAreaCode()
-
-    if (!code.isNullOrBlank()) {
-        queryAreaName(code)?.let { return it }
-    }
 
     addressInfo?.areaText()?.takeIf { it.isNotBlank() }?.let { return it }
     info?.getTextValue("poiName", "poi_name", "name")?.let { return it }
@@ -103,6 +94,21 @@ suspend fun Aweme.cityInfo(): String {
     getTextValue("ipAttribution", "ip_attribution")?.let { return it }
 
     return "未知"
+}
+
+/**
+ * 用作品自带的行政区划代码查询民政部地名信息库，单独作为一个字段展示:
+ * https://dmfw.mca.gov.cn/9095/xzqh/getList?code=510100
+ */
+suspend fun Aweme.areaApiInfo(): String? {
+    val info = poiInfo()
+    val addressInfo = info?.getFieldValue("addressInfo", "address_info")
+
+    val code = addressInfo?.getTextValue("cityCode", "city_code").asAreaCode()
+        ?: addressInfo?.getTextValue("adCodeV2", "ad_code_v2", "adCode").asAreaCode()
+        ?: getTextValue("city").asAreaCode()
+
+    return code?.let { queryAreaName(it) }
 }
 
 private fun Aweme.poiInfo(): Any? = getFieldValue("poiInfo", "poi_info")
