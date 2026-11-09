@@ -47,6 +47,37 @@ private fun Any.addressText(): String {
         .joinToString(" ")
 }
 
+/**
+ * 读取 poi_info.address_info 的地址信息，无 POI 时返回 null。
+ * 例: 浙江省 杭州市 西湖区 (330100 / 330106)
+ */
+fun Aweme.poiAddressInfo(): String? {
+    val poiInfo = getFieldValue("poiInfo", "poi_info") ?: return null
+    val addressInfo = poiInfo.getFieldValue("addressInfo", "address_info") ?: return null
+
+    val area = listOf("province", "city", "district")
+        .mapNotNull { addressInfo.getTextValue(it) }
+        .distinct()
+        .joinToString(" ")
+
+    val codes = listOf(
+        addressInfo.getTextValue("cityCode", "city_code"),
+        addressInfo.getTextValue("adCodeV2", "ad_code_v2", "adCode"),
+    ).filterNotNull()
+        .distinct()
+        .joinToString(" / ")
+
+    val detail = addressInfo.getTextValue("address", "simpleAddress", "simple_address")
+
+    return when {
+        area.isNotBlank() && codes.isNotBlank() -> "$area ($codes)"
+        area.isNotBlank() -> area
+        codes.isNotBlank() -> codes
+        !detail.isNullOrBlank() -> detail
+        else -> null
+    }
+}
+
 private fun Any.getFieldValue(vararg names: String): Any? {
     var type: Class<*>? = javaClass
     while (type != null) {

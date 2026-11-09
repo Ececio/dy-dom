@@ -27,6 +27,7 @@ import io.github.fplus.core.helper.DexkitBuilder
 import io.github.fplus.core.hook.logic.DownloadLogic
 import io.github.fplus.core.hook.logic.cityInfo
 import io.github.fplus.core.hook.logic.createDate
+import io.github.fplus.core.hook.logic.poiAddressInfo
 import io.github.fplus.core.ui.activity.FreedomSettingActivity
 import io.github.xpler.core.XplerLog
 import io.github.xpler.core.hookBlockRunning
@@ -211,7 +212,11 @@ class HLongPressLayout : BaseHook() {
 
             "视频信息" -> {
                 singleLaunchMain("$item") {
-                    val msg = "视频属地: ${aweme?.cityInfo()}\n发布时间: ${aweme?.createDate()}".trim()
+                    val msg = buildString {
+                        append("视频属地: ${aweme?.cityInfo()}")
+                        aweme?.poiAddressInfo()?.let { append("\nPOI地址: $it") }
+                        append("\n发布时间: ${aweme?.createDate()}")
+                    }.trim()
                     showMessageDialog(
                         context = view.context,
                         title = "视频信息",
