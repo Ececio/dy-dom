@@ -56,7 +56,13 @@ class DouYinMain(private val app: Application) {
             // search and hook
             DexkitBuilder.running(
                 app = app,
-                version = 30,
+                // 缓存版本号：改动 DexkitBuilder 里的任何 matcher 都必须递增它，
+                // 否则会直接命中旧缓存（缓存里存的是上次搜索结果，含失败时的 "null"），
+                // 表现为「改了 matcher 却毫无效果」。
+                // 31 -> 32：40.6.0 适配（mainBottomTabView / 评论区三处）
+                // 32 -> 33：40.6.0 适配（防撤回 / 表情包 / tabLanding / detailPage / feedAvatar
+                //           / autoPlayController / longPressEvent）
+                version = 33,
                 searchBefore = {
                     HPhoneWindow()
                     HActivity()
@@ -99,6 +105,19 @@ class DouYinMain(private val app: Application) {
                     HChatListRecyclerViewAdapter()
                     HChatListRecyclerViewAdapterNew()
                     HChatListRecalledHint()
+                    // 信息流广告过滤（依赖 DexKit 的 abstractFeedAdapterClazz）
+                    HFeedAdFilter()
+                    // 信息流广告拦截（依赖 DexKit 的 videoViewHolderClazz，主 feed 的 bind 入口）
+                    HFeedAdBlock()
+                    // 可玩广告的 ViewHolder（各自 final bind 重写，需单独挂）
+                    HFeedAdBlockPlayable()
+                    HFeedAdBlockPlayableInteractive()
+                    // 主 feed 数据流探针（诊断，默认关闭）
+                    HFeedBindProbe()
+                    // 运行时 View 树探针（诊断，默认关闭；用于定位 bottomCtrlBar 等静态无法收敛的控件）
+                    HViewTreeDump()
+                    // 广告拦截：不依赖 DexKit 结果，放最后执行
+                    HAdBlock()
                 }
             )
 

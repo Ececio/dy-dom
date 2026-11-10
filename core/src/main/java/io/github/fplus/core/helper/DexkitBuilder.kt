@@ -17,7 +17,6 @@ import io.github.xpler.core.lparam
 import org.json.JSONArray
 import org.json.JSONObject
 import org.luckypray.dexkit.DexKitBridge
-import org.luckypray.dexkit.query.enums.StringMatchType
 import org.luckypray.dexkit.result.ClassData
 import org.luckypray.dexkit.result.ClassDataList
 import org.luckypray.dexkit.result.MethodData
@@ -109,9 +108,17 @@ object DexkitBuilder {
         KLogCat.tagI(TAG, "Dexkit开始搜索: ${lparam.appInfo.sourceDir}")
         // System.loadLibrary("dexkit")
         DexKitBridge.create(lparam.appInfo.sourceDir).use { bridge ->
+            // 40.6.0 起该类被移入 panel.ui 子包（旧版本在同级 sidebar 包），故两条路径都试
             val sideBarNestedScrollView = bridge.findClass {
                 matcher {
-                    className = "com.ss.android.ugc.aweme.sidebar.SideBarNestedScrollView"
+                    className = "com.ss.android.ugc.aweme.sidebar.panel.ui.SideBarNestedScrollView"
+                }
+            }.let { found ->
+                if (found.singleOrNull() != null) found
+                else bridge.findClass {
+                    matcher {
+                        className = "com.ss.android.ugc.aweme.sidebar.SideBarNestedScrollView"
+                    }
                 }
             }
             sideBarNestedScrollViewClazz = sideBarNestedScrollView.instance("sideBarNestedScrollView")
@@ -163,63 +170,58 @@ object DexkitBuilder {
             }
             mainBottomPhotoTabClazz = mainBottomPhotoTab.instance("mainBottomPhotoTab")
 
+            // 40.6.0 适配：去掉已移除的 VideoCommentPageParam 字段
+            // （该版本 com/.../comment/param/ 包只剩 SocialDialogViewModel），其余特征保留。
+            // 类本身未混淆也未迁移，直接用类名匹配最稳。
             val commentListPageFragment = bridge.findClass {
                 matcher {
+                    className = "com.ss.android.ugc.aweme.comment.ui.CommentListPageFragment"
+                    superClass = "com.ss.android.ugc.aweme.comment.arch.LifecycleDispatchFragment"
+
                     fields {
                         add {
                             type = "com.ss.android.ugc.aweme.comment.widget.CommentNestedLayout"
                         }
-                        add {
-                            type = "com.ss.android.ugc.aweme.comment.param.VideoCommentPageParam"
-                        }
                     }
 
-                    // methods {
-                    //     add {
-                    //         returnType = "com.ss.android.ugc.aweme.comment.constants.CommentColorMode"
-                    //     }
-                    // }
-
-                    usingStrings = listOf(
-                        "com/ss/android/ugc/aweme/comment/ui/CommentListPageFragment",
-                        "CommentListPageFragment",
-                    )
+                    usingStrings = listOf("CommentListPageFragment")
                 }
             }
             commentListPageFragmentClazz = commentListPageFragment.instance("commentListPageFragment")
 
+            // 40.6.0 适配：CommentColorMode 不是被移除，而是**被混淆成 X/0dQI**（枚举，
+            // 常量 MODE_LIGHT / MODE_DARK / MODE_LIGHT_OR_DARK）。按原类名匹配必然失败，
+            // 改为直接用未混淆的 ViewModel 类名定位。
             val commentColorModeViewMode = bridge.findClass {
                 matcher {
+                    className = "com.ss.android.ugc.aweme.comment.viewmodel.CommentColorViewModel"
                     superClass = "androidx.lifecycle.ViewModel"
-                    methods {
-                        add {
-                            returnType = "com.ss.android.ugc.aweme.comment.constants.CommentColorMode"
-                        }
-
-                        add {
-                            paramTypes = listOf("com.ss.android.ugc.aweme.comment.constants.CommentColorMode")
-                        }
-                    }
+                    usingStrings = listOf("CommentColorViewModel")
                 }
             }
             commentColorModeViewModeClazz = commentColorModeViewMode.instance("commentColorModeViewMode")
 
-            val conversationFragment = bridge.findClass {
-                matcher {
-                    fields {
-                        add {
-                            type = "com.ss.android.ugc.aweme.conversation.CommentConversationLayout"
-                        }
-                        add {
-                            type = "com.ss.android.ugc.aweme.comment.widget.CommentNestedLayout"
+            // 40.6.0 适配：旧的 ConversationFragment / CommentConversationLayout / 
+            // com/.../conversation 包在整树 0 命中，回复页已迁到 replytree/replylist/，
+            // 且被 AB 开关分流为「双实现」，这里两个都试，取先命中的那个。
+            val conversationFragment = run {
+                val candidates = listOf(
+                    "com.ss.android.ugc.aweme.replytree.replylist.ReplyTreeListFragment",
+                    "com.ss.android.ugc.aweme.replytree.replylist.KmpReplyTreeListFragment",
+                )
+                var found = bridge.findClass {
+                    matcher {
+                        className = candidates[0]
+                    }
+                }
+                if (found.singleOrNull() == null) {
+                    found = bridge.findClass {
+                        matcher {
+                            className = candidates[1]
                         }
                     }
-
-                    usingStrings = listOf(
-                        "com/ss/android/ugc/aweme/comment/ui/ConversationFragment",
-                        "ConversationFragment",
-                    )
                 }
+                found
             }
             conversationFragmentClazz = conversationFragment.instance("conversationFragment")
 
@@ -280,32 +282,33 @@ object DexkitBuilder {
             fullFeedFollowFetchPresenterClazz =
                 fullFeedFollowFetchPresenter.instance("fullFeedFollowFetchPresenter")
 
+            // 40.6.0 适配：原条件全失效 —— 5 个方法里要求的修饰符是 PRIVATE，而 40.6.0 里
+            // 实际是 public final；且该类已不再引用 RemoteImageView（弹窗大图改用 SimpleDraweeView）。
+            // 目标类为 X/0yoc（classes30），日志 tag "BigEmojiPopHelper" 在全部 55 个 dex 中
+            // 仅被 2 处引用（自身 + 内联 lambda），是唯一稳定锚点。
             val emojiPopupWindow = bridge.findClass {
+                searchPackages("X")
                 matcher {
                     methods {
                         add {
-                            modifiers = Modifier.PRIVATE
-                            returnType = "com.ss.android.ugc.aweme.base.ui.RemoteImageView"
+                            paramTypes = listOf(
+                                "com.ss.android.ugc.aweme.emoji.base.BaseEmoji",
+                                "com.ss.android.ugc.aweme.emoji.emojichoose.EmojiChooseParams",
+                                "com.bytedance.ies.dmt.ui.widget.DmtTextView",
+                            )
                         }
                         add {
-                            modifiers = Modifier.PRIVATE
+                            returnType = "com.ss.android.ugc.aweme.emoji.views.EmojiPopWindow"
+                        }
+                        add {
                             returnType = "com.bytedance.ies.dmt.ui.widget.DmtTextView"
                         }
                         add {
-                            modifiers = Modifier.PUBLIC
                             paramTypes = listOf("android.content.Context")
                         }
-                        add {
-                            modifiers = Modifier.PRIVATE
-                            paramTypes = listOf("com.ss.android.ugc.aweme.emoji.base.BaseEmoji")
-                        }
-                        add {
-                            modifiers = Modifier.PRIVATE
-                            paramTypes = listOf(
-                                "com.ss.android.ugc.aweme.emoji.base.BaseEmoji",
-                                "com.ss.android.ugc.aweme.base.ui.RemoteImageView",
-                            )
-                        }
+                    }
+                    usingStrings {
+                        add("BigEmojiPopHelper")
                     }
                 }
             }
@@ -333,6 +336,11 @@ object DexkitBuilder {
             seekBarSpeedModeBottomContainerClazz =
                 seekBarSpeedModeBottomContainer.instance("seekBarSpeedModeBottomContainer")
 
+            // 40.6.0 适配：目标类为 X/1Br3（classes37，super=FrameLayout）。
+            // 原条件已全失效：getBottomColor 在 40.6.0 全库 0 命中；三条 usingStrings 的字面量
+            // 虽仍在 dex 字符串池里，但**没有任何类的字节码引用它们**（DexKit 的 usingStrings
+            // 匹配的是「类内引用」，不是「池中存在」）。
+            // 改用 40.6.0 新增的未混淆 getter/setter 组合作为锚点。
             val mainBottomTabView = bridge.findClass {
                 matcher {
                     superClass = "android.widget.FrameLayout"
@@ -345,30 +353,14 @@ object DexkitBuilder {
 
                     methods {
                         add {
-                            name = "getBottomColor"
+                            name = "setMaskAlpha"
                         }
                         add {
-                            name = "setBackgroundDrawable"
-                            paramTypes = listOf("android.graphics.drawable.Drawable")
+                            name = "setMaskVisibility"
                         }
                         add {
-                            name = "setBackgroundResource"
+                            name = "getMaskAlpha"
                         }
-                        add {
-                            name = "setBackgroundColor"
-                        }
-                        add {
-                            name = "setVisibility"
-                        }
-                        add {
-                            name = "setAlpha"
-                        }
-                    }
-
-                    usingStrings {
-                        add("alpha", StringMatchType.Equals)
-                        add("translationY", StringMatchType.Equals)
-                        add("MainBottomTabView", StringMatchType.Equals)
                     }
                 }
             }
@@ -398,6 +390,13 @@ object DexkitBuilder {
             }
             bottomCtrlBarClazz = bottomCtrlBar.instance("bottomCtrlBar")
 
+            // 40.6.0 适配：**故意保持原特征不动**。
+            // 旧特征（RecyclerView$ItemAnimator 字段、RecyclerView 字段）在 40.6.0 已不存在
+            // （RecyclerView 字段上移到父类 BaseHiddenSupportAdapter，ItemAnimator 只出现在方法体里），
+            // 因此本 matcher 会返回 null。
+            // 而 chatListRecyclerViewAdapterNew 已能命中同一目标类（CellComposeAdapter）——
+            // 两者 hook 逻辑等价，若同时命中会重复 hook、导致 itemView 被插入两个 TextView。
+            // 故保留旧特征让它自然失败，由 New 版承担。
             val chatListRecyclerViewAdapter = bridge.findClass {
                 // searchPackages("X")
                 matcher {
@@ -440,8 +439,10 @@ object DexkitBuilder {
                         type = "com.ss.android.ugc.aweme.im.sdk.chat.SessionInfo"
                     }
 
+                    // 40.6.0 适配：该方法的返回类型变成混淆类 LX/1Mas（不再是 InjectionAware），
+                    // 但方法名未混淆 —— 改按名字匹配即可恢复。
                     addMethod {
-                        returnType = "com.ss.android.ugc.aweme.rips.InjectionAware"
+                        name = "getInjectionAware"
                     }
 
                     addMethod {
@@ -459,15 +460,18 @@ object DexkitBuilder {
             }
             chatListRecyclerViewAdapterNewClazz = chatListRecyclerViewAdapterNew.instance("chatListRecyclerViewAdapterNew")
 
+            // 40.6.0 适配：目标类为 RecallCellUI（classes25，撤回消息 cell）。
+            // 两条原特征已整体消失：(a) getFastEventBusSubscriberClass 被移除；
+            // (b) InterceptTouchLinearLayout 从字段退化为局部变量（smali 里是 instance-of/check-cast）。
+            // 改用 superClass(SystemCellUI) + TextView 字段 + ViewModel 子类字段 + (?,int,List) 方法重建；
+            // superClass 同时用于排除另一子类 XPlanOeRecallCellUI（它没有这两个字段）。
             val chatListRecalledHint = bridge.findClass {
                 matcher {
+                    superClass = "com.ss.android.ugc.aweme.im.business.chat.msgcell.common.content.onlymigration.system.SystemCellUI"
+
                     fields {
                         add {
                             type = "android.widget.TextView"
-                        }
-
-                        add {
-                            type = "com.ss.android.ugc.aweme.views.InterceptTouchLinearLayout"
                         }
 
                         add {
@@ -478,11 +482,6 @@ object DexkitBuilder {
                     }
 
                     methods {
-                        add {
-                            name = "getFastEventBusSubscriberClass"
-                            returnType = "java.lang.Class"
-                        }
-
                         add {
                             paramTypes = listOf(
                                 null,
@@ -511,21 +510,14 @@ object DexkitBuilder {
             }
             restartUtilsClazz = restartUtils.instance("restartUtils")
 
+            // 40.6.0 适配：原条件匹配的是接口声明上的 @EnclosingClass 注解（旧版内部接口带此注解）。
+            // 40.6.0 把 LongPressLayout 的内部监听接口提为顶层类 X/0w4F（仅 8 行、无任何注解），
+            // 注解条件永不成立。改用「实现 X/0w4F + Aweme 字段 + Context 字段」定位 ——
+            // 全库唯一命中 X/0UWT（旧版对应 X/0YRV，字段结构一致）。
             val longPressEvent = bridge.findClass {
                 matcher {
                     interfaces {
-                        add {
-                            addAnnotation {
-                                addElement {
-                                    name = "value"
-                                    value {
-                                        classValue {
-                                            this.className = "com.ss.android.ugc.aweme.feed.ui.LongPressLayout"
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        add { className = "X.0w4F" }
                     }
 
                     addField {
@@ -538,6 +530,12 @@ object DexkitBuilder {
             }
             longPressEventClazz = longPressEvent.instance("longPressEvent")
 
+            // 40.6.0 无法恢复：已穷举证明全库不存在 (View, MotionEvent, MotionEvent, MotionEvent)，
+            // 也不存在 (View, MotionEvent, MotionEvent)。三连 MotionEvent 只出现在 classes28 的 6 个类
+            // （AbsPressTapPresenter / SearchVideoView / LinearLayoutForSlidesPhotos / SearchTouchActionView
+            // / X/0uR4 / ATListenerS…），均与双击监听无关。
+            // 保持原条件使其自然失败；双击拦截改由 HLongPressLayout 的 onTouchEvent hook 承担
+            // （那里模块本就在统计 numberOfTaps / lastTapTimeMs）。
             val doubleClickEvent = bridge.findClass {
                 matcher {
                     fieldCount(1)
@@ -558,6 +556,10 @@ object DexkitBuilder {
             }
             doubleClickEventClazz = doubleClickEvent.instance("doubleClickEvent")
 
+            // 40.6.0 适配：字符串 "normal" 在目标类的字符串表中已消失（旧版有），
+            // 这是原 matcher 唯一失效原因。去掉后仍可唯一定位到
+            // com.ss.android.ugc.aweme.feed.plato.business.contentconsumption.autoplay.AutoPlayViewModel
+            // （该类含 7 个 QLiveData 字段 + qA() 返回 QLiveData，且体内引用 auto_play_key / swipe）。
             val autoPlayController = bridge.findClass {
                 matcher {
                     fields {
@@ -573,7 +575,6 @@ object DexkitBuilder {
                     }
 
                     usingStrings {
-                        add("normal")
                         add("swipe")
                         add("auto_play_key")
                     }
@@ -613,12 +614,16 @@ object DexkitBuilder {
             }
             livePhotoClazz = livePhoto.instance("livePhoto")
 
+            // 40.6.0 适配：类型 TabLandGuideTriggerEventType 已删除 → 改 TabLandGuideTriggerEventConsumer；
+            // 方法签名 VideoItemParams → QModel（该类 22 个方法无一接收 VideoItemParams）；
+            // 字符串 tabLandingActionBtn 全库不存在 → 改用独占锚点 TabLandGuideModule
+            // 与 "showTabLandGuideLanding "（注意尾随空格）。
             val tabLanding = bridge.findClass {
                 matcher {
                     fields {
                         add {
                             type =
-                                "com.ss.android.ugc.aweme.feed.plato.business.mainarchitecture.tablandguide.TabLandGuideTriggerEventType"
+                                "com.ss.android.ugc.aweme.feed.plato.business.mainarchitecture.tablandguide.ability.TabLandGuideTriggerEventConsumer"
                         }
                         add {
                             type = "com.bytedance.dux.image.DuxImageView"
@@ -630,10 +635,10 @@ object DexkitBuilder {
                     }
                     methods {
                         add {
-                            paramTypes = listOf("com.ss.android.ugc.aweme.feed.model.VideoItemParams")
+                            paramTypes = listOf("com.ss.android.ugc.aweme.kiwi.model.QModel")
                         }
                     }
-                    usingStrings = listOf("TabLandGuidePresenter", "tabLandingActionBtn")
+                    usingStrings = listOf("TabLandGuideModule", "showTabLandGuideLanding ")
                 }
             }
             tabLandingClazz = tabLanding.instance("tabLanding")
@@ -642,22 +647,25 @@ object DexkitBuilder {
             //
             // by using string
             val findMaps = bridge.batchFindClassUsingStrings {
+                // 40.6.0 适配：原后两串已漂移（类名串作为常量已失效；DetailActOtherNitaView 只在别的类）。
+                // 改用 a1128.b7947 + a1128.b7947.c398285.d0 —— 后者全库仅 DetailPageFragment 引用，AND 后唯一。
                 addSearchGroup {
                     groupName = "detailPageFragment"
                     usingStrings = listOf(
                         "a1128.b7947",
-                        "com/ss/android/ugc/aweme/detail/ui/DetailPageFragment",
-                        "DetailActOtherNitaView",
+                        "a1128.b7947.c398285.d0",
                     )
                 }
 
+                // 40.6.0 适配：原四串全都不能当锚点 —— 类名串作为常量已失效（只剩 L 型描述符）；
+                // 「当前无网络，暂不可用」被至少 7 个类共用（且 smali 里是 \uXXXX 转义）；
+                // 「follow」泛滥；「click_hea」根本不存在（只有 click_head，这是原 matcher 一直失败的隐患）。
+                // 改用两个独占串的 AND 交集。
                 addSearchGroup {
                     groupName = "feedAvatarPresenter"
                     usingStrings = listOf(
-                        "com/ss/android/ugc/aweme/feed/quick/presenter/FeedAvatarPresenter",
-                        "当前无网络，暂不可用",
-                        "follow",
-                        "click_hea",
+                        "loadAvatarViews:",
+                        "jx_feed_avatar_show_live_opt",
                     )
                 }
             }

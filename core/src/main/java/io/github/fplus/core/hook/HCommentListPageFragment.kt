@@ -4,7 +4,6 @@ import android.os.Bundle
 import android.view.View
 import com.freegang.extension.forEachWhereChild
 import com.freegang.extension.removeInParent
-import com.ss.android.ugc.aweme.comment.constants.CommentColorMode
 import io.github.fplus.core.base.BaseHook
 import io.github.fplus.core.config.ConfigV1
 import io.github.fplus.core.helper.DexkitBuilder
@@ -51,27 +50,28 @@ class HCommentListPageFragment : BaseHook() {
             return DexkitBuilder.commentColorModeViewModeClazz ?: NoneHook::class.java
         }
 
+        // 参数类型不能写成 CommentColorMode —— 该类在抖音 40.6.0 已被混淆为 LX/0dQI;
+        // （aweme 代理模块里那个名字只存在于编译期），运行时按名解析会抛 NoClassDefFoundError。
+        // 改成 Enum<*>（xpler 用 isAssignableFrom 匹配，能命中枚举子类），运行时按常量名取目标枚举值。
         @OnBefore
         fun setCommentColorModeBefore(
             params: MethodParam,
-            mode: CommentColorMode,
+            mode: Enum<*>,
         ) {
             hookBlockRunning(params) {
                 if (!config.isCommentColorMode)
                     return
 
-                args[0] = when (config.commentColorMode) {
-                    0 -> {
-                        CommentColorMode.MODE_LIGHT
-                    }
-
-                    1 -> {
-                        CommentColorMode.MODE_DARK
-                    }
-
-                    else -> {
-                        CommentColorMode.MODE_LIGHT_OR_DARK
-                    }
+                val targetName = when (config.commentColorMode) {
+                    0 -> "MODE_LIGHT"
+                    1 -> "MODE_DARK"
+                    else -> "MODE_LIGHT_OR_DARK"
+                }
+                // 走枚举常量当量清单，避开 javaClass 可能是匿名子类、以及字段名变化的问题
+                val constants = mode.javaClass.enumConstants ?: return@hookBlockRunning
+                val target = constants.firstOrNull { (it as? Enum<*>)?.name == targetName }
+                if (target != null) {
+                    args[0] = target
                 }
             }.onFailure {
                 XplerLog.e(it)

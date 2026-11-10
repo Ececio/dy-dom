@@ -3,12 +3,34 @@ plugins {
     id "org.jetbrains.kotlin.android"
 }
 
-// Release 签名配置：优先使用环境变量（CI 中由 GitHub Secrets 注入）。
-// 未配置时回退到 debug 签名，保证产出的 release APK 可安装。
-def releaseStorePassword = System.getenv("RELEASE_STORE_PASSWORD")
-def releaseKeyAlias = System.getenv("RELEASE_KEY_ALIAS")
-def releaseKeyPassword = System.getenv("RELEASE_KEY_PASSWORD") ?: releaseStorePassword
-def releaseStoreFile = System.getenv("RELEASE_STORE_FILE") ?: rootProject.file("keystore.jks").absolutePath
+// ---------------------------------------------------------------------------
+// 签名配置
+//
+// 优先级：
+//   1. 环境变量（CI 由 GitHub Secrets 注入）：
+//      RELEASE_STORE_FILE / RELEASE_STORE_PASSWORD / RELEASE_KEY_ALIAS / RELEASE_KEY_PASSWORD
+//   2. 工程根目录 keystore.properties（本地开发用，已在 .gitignore 中忽略）
+//   3. 两者都没有时回退 debug 签名，保证 release APK 仍可安装
+//
+// keystore.properties 格式：
+//   storeFile=freedom-release.jks
+//   storePassword=<你的密钥库口令>
+//   keyAlias=freedom
+//   keyPassword=<你的密钥口令>
+// 生成新密钥的命令见 docs/构建.md。
+// ---------------------------------------------------------------------------
+def keystoreProps = new Properties()
+def keystorePropsFile = rootProject.file("keystore.properties")
+if (keystorePropsFile.exists()) {
+    keystorePropsFile.withInputStream { keystoreProps.load(it) }
+}
+
+def propsStoreFile = keystoreProps.getProperty("storeFile")
+def releaseStoreFile = System.getenv("RELEASE_STORE_FILE")
+        ?: (propsStoreFile ? rootProject.file(propsStoreFile).absolutePath : rootProject.file("keystore.jks").absolutePath)
+def releaseStorePassword = System.getenv("RELEASE_STORE_PASSWORD") ?: keystoreProps.getProperty("storePassword")
+def releaseKeyAlias = System.getenv("RELEASE_KEY_ALIAS") ?: keystoreProps.getProperty("keyAlias")
+def releaseKeyPassword = System.getenv("RELEASE_KEY_PASSWORD") ?: keystoreProps.getProperty("keyPassword") ?: releaseStorePassword
 def hasReleaseSigning = releaseStorePassword && releaseKeyAlias && file(releaseStoreFile).exists()
 
 android {
@@ -20,8 +42,8 @@ android {
         minSdk 24
         targetSdk 33
 
-        versionCode 145
-        versionName "1.3.9"
+        versionCode 146
+        versionName "1.3.10"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

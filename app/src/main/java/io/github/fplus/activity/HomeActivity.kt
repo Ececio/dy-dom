@@ -40,7 +40,6 @@ import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -55,14 +54,15 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.lifecycleScope
-import com.freegang.extension.appVersion
 import com.freegang.ktutils.app.KAppUtils
 import com.freegang.ktutils.app.KToastUtils
 import com.freegang.ktutils.log.KLogCat
 import io.github.fplus.FreedomTheme
 import io.github.fplus.HookStatus
+import io.github.fplus.ProjectInfo
 import io.github.fplus.Themes
 import io.github.fplus.core.config.ConfigV1
+import io.github.fplus.core.config.Version
 import io.github.fplus.core.ui.component.FCard
 import io.github.fplus.core.ui.component.FMessageDialog
 import io.github.fplus.resource.IconRes
@@ -70,11 +70,10 @@ import io.github.fplus.resource.StringRes
 import io.github.fplus.resource.icons.FindFile
 import io.github.fplus.resource.icons.Github
 import io.github.fplus.resource.icons.Motion
-import io.github.fplus.resource.icons.SpicyStrips
-import io.github.fplus.resource.icons.Telegram
 import io.github.fplus.resource.icons.Visibility
 import io.github.fplus.resource.icons.VisibilityOff
 import io.github.fplus.viewmodel.HomeVM
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -243,47 +242,9 @@ class HomeActivity : ComponentActivity() {
             }
         }
 
-        // 版本更新弹窗
-        var showNewVersionDialog by remember { mutableStateOf(true) }
-        val version by model.versionConfig.observeAsState()
-        if (version != null) {
-            val v = version!!
-            if (v.tagName.compareTo(
-                    application.appVersion(
-                        "-",
-                        true
-                    )
-                ) >= 1 && showNewVersionDialog
-            ) {
-                FMessageDialog(
-                    title = "发现新版本 ${v.name}!",
-                    confirm = "确定",
-                    cancel = "取消",
-                    onCancel = {
-                        showNewVersionDialog = false
-                    },
-                    onConfirm = {
-                        startActivity(
-                            Intent(
-                                Intent.ACTION_VIEW,
-                                Uri.parse(v.browserDownloadUrl),
-                            )
-                        )
-                    },
-                ) {
-                    LazyColumn(
-                        modifier = Modifier,
-                    ) {
-                        item {
-                            Text(
-                                modifier = Modifier.fillMaxWidth(),
-                                text = v.body,
-                                style = MaterialTheme.typography.body1,
-                            )
-                        }
-                    }
-                }
-            }
+        // 版本适配列表（本地，随包分发）
+        LaunchedEffect(key1 = "localVersions") {
+            withContext(Dispatchers.IO) { Version.ensureLocalVersions(application) }
         }
 
         // view
@@ -369,7 +330,7 @@ class HomeActivity : ComponentActivity() {
                                 style = Themes.nowTypography.body1,
                             )
                             Text(
-                                text = if (model.isDisablePlugin) "点击跳转模块设置" else "抖音内部左上角侧滑栏/加号按钮唤起模块设置",
+                                text = if (model.isDisablePlugin) "点击跳转模块设置" else "长按抖音上半部分唤起模块设置",
                                 style = Themes.nowTypography.overline,
                             )
                         }
@@ -488,7 +449,7 @@ class HomeActivity : ComponentActivity() {
                                 style = Themes.nowTypography.body1,
                             )
                             Text(
-                                text = "https://github.com/GangJust/FreedomPlus",
+                                text = ProjectInfo.REPO_URL,
                                 style = Themes.nowTypography.overline,
                             )
                         }
@@ -515,18 +476,18 @@ class HomeActivity : ComponentActivity() {
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Email,
-                            contentDescription = "开源说明",
+                            contentDescription = "问题反馈",
                             tint = Themes.nowColors.icon,
                             modifier = Modifier.size(24.dp)
                         )
                         Spacer(modifier = Modifier.padding(horizontal = 8.dp))
                         Column {
                             Text(
-                                text = "开源说明",
+                                text = "问题反馈",
                                 style = Themes.nowTypography.body1,
                             )
                             Text(
-                                text = "代码开源旨在个人学习，如果认为代码内容存在不当，请联系删除",
+                                text = "遇到问题请提交 Issue: ${ProjectInfo.REPO_URL}/issues",
                                 style = Themes.nowTypography.overline,
                             )
                         }
@@ -534,81 +495,6 @@ class HomeActivity : ComponentActivity() {
                 }
             }
 
-            // tg频道
-            item {
-                FCard(
-                    modifier = Modifier
-                        .padding(vertical = 4.dp)
-                        .clickable(
-                            indication = null,
-                            interactionSource = remember { MutableInteractionSource() },
-                            onClick = { joinTgGroup() }
-                        ),
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 24.dp, vertical = 16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            imageVector = IconRes.Telegram,
-                            contentDescription = "Telegram频道",
-                            tint = Themes.nowColors.icon,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.padding(horizontal = 8.dp))
-                        Column {
-                            Text(
-                                text = "Telegram频道",
-                                style = Themes.nowTypography.body1,
-                            )
-                            Text(
-                                text = "版本发布, Bug反馈~",
-                                style = Themes.nowTypography.overline,
-                            )
-                        }
-                    }
-                }
-            }
-
-            // 打赏
-            item {
-                FCard(
-                    modifier = Modifier
-                        .padding(vertical = 4.dp)
-                        .clickable(
-                            indication = null,
-                            interactionSource = remember { MutableInteractionSource() },
-                            onClick = { rewardByAlipay() }
-                        ),
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 24.dp, vertical = 16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            imageVector = IconRes.SpicyStrips,
-                            contentDescription = "请我吃辣条",
-                            tint = Themes.nowColors.icon,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.padding(horizontal = 8.dp))
-                        Column {
-                            Text(
-                                text = "请我吃辣条",
-                                style = Themes.nowTypography.body1,
-                            )
-                            Text(
-                                text = "模块免费且开源，不强制打赏~",
-                                style = Themes.nowTypography.overline,
-                            )
-                        }
-                    }
-                }
-            }
         }
     }
 
@@ -637,8 +523,6 @@ class HomeActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        model.checkVersion()
-        model.updateVersions()
     }
 
     private fun toModuleSetting() {
@@ -674,7 +558,7 @@ class HomeActivity : ComponentActivity() {
             startActivity(
                 Intent(
                     Intent.ACTION_VIEW,
-                    Uri.parse("https://github.com/GangJust/FreedomPlus"),
+                    Uri.parse(ProjectInfo.REPO_URL),
                 )
             )
             return
@@ -683,7 +567,7 @@ class HomeActivity : ComponentActivity() {
         }
 
         val manager = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        manager.setPrimaryClip(ClipData.newPlainText("github link", "https://github.com/GangJust/FreedomPlus"))
+        manager.setPrimaryClip(ClipData.newPlainText("github link", ProjectInfo.REPO_URL))
         KToastUtils.show(applicationContext, "未安装浏览器，链接已复制！")
     }
 
@@ -692,7 +576,7 @@ class HomeActivity : ComponentActivity() {
             startActivity(
                 Intent(
                     Intent.ACTION_VIEW,
-                    Uri.parse("mailto:freegang555@gmail.com"),
+                    Uri.parse("${ProjectInfo.REPO_URL}/issues"),
                 )
             )
             return
@@ -700,37 +584,8 @@ class HomeActivity : ComponentActivity() {
         }
 
         val manager = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        manager.setPrimaryClip(ClipData.newPlainText("feedback email", "freegang555@gmail.com"))
-        Toast.makeText(applicationContext, "未安装邮箱类App，邮箱已复制！", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun joinTgGroup() {
-        val uri = Uri.parse("https://t.me/FreedomPlugin")
-        try {
-            val telegramIntent = Intent(Intent.ACTION_VIEW, uri)
-            telegramIntent.setPackage("org.telegram.messenger")
-            startActivity(telegramIntent)
-            return
-        } catch (_: Exception) {
-        }
-
-        val manager = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        manager.setPrimaryClip(ClipData.newPlainText("telegram link", "https://t.me/FreedomPlugin"))
-        KToastUtils.show(applicationContext, "未安装telegram，链接已复制！")
-    }
-
-    private fun rewardByAlipay() {
-        try {
-            startActivity(
-                Intent(
-                    Intent.ACTION_VIEW,
-                    Uri.parse("alipayqr://platformapi/startapp?saId=10000007&clientVersion=3.7.0.0718&qrcode=https%3A%2F%2Fqr.alipay.com%2Ffkx16432yv9pgvtqup8tv28")
-                )
-            )
-            return
-        } catch (_: Exception) {
-        }
-        KToastUtils.show(applicationContext, "谢谢，你没有安装支付宝客户端")
+        manager.setPrimaryClip(ClipData.newPlainText("issues link", "${ProjectInfo.REPO_URL}/issues"))
+        Toast.makeText(applicationContext, "未安装浏览器，链接已复制！", Toast.LENGTH_SHORT).show()
     }
 
     private fun isLauncherIconVisible(context: Context): Boolean {

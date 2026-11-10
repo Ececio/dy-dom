@@ -46,6 +46,19 @@ class HLandscapeFeedActivity : BaseHook() {
         }
     }
 
+    /**
+     * 注意：这两个注解当前绑不上。
+     *
+     * `onWindowFocusChanged` 定义在父类 android.app.Activity 上，而
+     * `LandscapeFeedActivity` 并未重写它（实机核对：该类只有 onResume/onPause/onStart/
+     * onStop/onCreate 等，无 onWindowFocusChanged）。xpler 只检索目标类的
+     * declaredMethods（HookEntity.getHookTargetAllMethods），因此这里取不到目标方法。
+     *
+     * 相同效果已由 `HActivity` 的 onWindowFocusChangedAfter 接管——它 hook 的是
+     * android.app.Activity，覆盖所有 Activity 实例，并对横屏页做了强制全沉浸分支。
+     *
+     * 保留原写法是为了：若将来抖音把该方法下移到 LandscapeFeedActivity，这里会自动生效。
+     */
     @OnBefore("onWindowFocusChanged")
     @OnAfter("onWindowFocusChanged")
     fun onWindowFocusChangedAfter(params: MethodParam, boolean: Boolean) {

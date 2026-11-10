@@ -24,6 +24,11 @@ import io.github.xpler.core.proxy.MethodParam
 import kotlinx.coroutines.delay
 
 class HAbstractFeedAdapter : BaseHook() {
+    companion object {
+        /** 用类名比较替代代理类的 `is`/`as`，避免其在目标抖音版本不存在时抛 NoClassDefFoundError */
+        private const val VIDEO_VIEW_HOLDER_ROOT_VIEW =
+            "com.ss.android.ugc.aweme.ad.feed.VideoViewHolderRootView"
+    }
     private val config get() = ConfigV1.get()
 
     override fun setTargetClass(): Class<*> {
@@ -42,7 +47,7 @@ class HAbstractFeedAdapter : BaseHook() {
                 return
 
             // KLogCat.d("view: $view")
-            if (view is FrameLayout && view !is VideoViewHolderRootView) {
+            if (view is FrameLayout && view.javaClass.name != VIDEO_VIEW_HOLDER_ROOT_VIEW) {
 
                 // 垫高
                 view.forEachChild { if (it.background is GradientDrawable) it.background = null }

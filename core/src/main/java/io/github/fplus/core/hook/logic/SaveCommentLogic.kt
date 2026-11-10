@@ -44,7 +44,11 @@ class SaveCommentLogic(
 
     private fun getVideoUrlList(aweme: Aweme): List<String> {
         val video = aweme.video ?: return emptyList()
-        return video.playAddrH265?.urlList ?: video.h264PlayAddr?.urlList ?: emptyList()
+        // 40.6.0：`playAddrH265` 等字段名被混淆，改走 @SerializedName 锚点（见 AwemeExt.kt）
+        return video.findVideoUrlList(
+            jsonKeys = listOf("play_addr_265", "play_addr_h264", "play_addr"),
+            legacyNames = listOf("playAddrH265", "h264PlayAddr", "playAddr"),
+        ) ?: emptyList()
     }
 
     private fun getImagesUrlList(aweme: Aweme): List<String> {

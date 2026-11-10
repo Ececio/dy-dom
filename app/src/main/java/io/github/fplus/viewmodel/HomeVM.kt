@@ -3,36 +3,27 @@ package io.github.fplus.viewmodel
 import android.app.Application
 import android.os.Environment
 import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.LiveData
-import androidx.lifecycle.MutableLiveData
-import androidx.lifecycle.viewModelScope
-import com.freegang.extension.appVersionName
 import com.freegang.extension.child
 import com.freegang.extension.storageRootFile
-import com.freegang.ktutils.app.KAppUtils
 import io.github.fplus.core.config.ConfigV1
 import io.github.fplus.core.config.Version
-import io.github.fplus.core.config.VersionConfig
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 class HomeVM(application: Application) : AndroidViewModel(application) {
     private val app: Application get() = getApplication()
 
-    private var _versionConfig = MutableLiveData<VersionConfig>()
-    val versionConfig: LiveData<VersionConfig> = _versionConfig
-
     // module config
     private val config: ConfigV1 get() = ConfigV1.get()
 
-    // FreedomPlus -> 外置存储器/Download/Freedom/
+    // FreedomPlus -> 外置存储器/DCIM/Freedom
     val freedomPlusData
         get() = getApplication<Application>().storageRootFile
             .child(Environment.DIRECTORY_DCIM)
             .child("Freedom")
 
-    // FreedomPlusNew -> 外置存储器/Download/Freedom/
+    // FreedomPlusNew -> 外置存储器/Download/Freedom
     val freedomPlusNewData
         get() = getApplication<Application>().storageRootFile
             .child(Environment.DIRECTORY_DOWNLOADS)
@@ -41,39 +32,27 @@ class HomeVM(application: Application) : AndroidViewModel(application) {
     // 是否开启去插件化
     val isDisablePlugin get() = config.isDisablePlugin
 
-    // 检查版本更新
-    fun checkVersion() {
-        if (KAppUtils.isAppInDebug(app)) return // 测试包不检查更新
-        if (app.appVersionName.contains(Regex("beta|alpha"))) return // 非release包不检查更新
-        viewModelScope.launch {
-            val version = withContext(Dispatchers.IO) { Version.getRemoteReleasesLatest() }
-            if (version != null) _versionConfig.value = version
-        }
-    }
+    // 本地更新日志（随包分发，OTA 已下线后不再联网获取）
+    val updateLog: File get() = ConfigV1.getConfigDir(app).child("update.txt")
 
-    // 获取远程版本适配列表
-    fun updateVersions() {
-        if (KAppUtils.isAppInDebug(app)) return // 测试包不检查更新
-        if (app.appVersionName.contains(Regex("beta|alpha"))) return // 非release包不检查更新
-        viewModelScope.launch {
-            withContext(Dispatchers.IO) {
-                val versions = Version.getVersions() ?: return@withContext
-                val file = ConfigV1.getConfigDir(app).child("versions.json")
-                file.writeText(versions)
-            }
-        }
-    }
-
-    // 版本适配提示
+    /**
+     * 版本功能适配提示。
+     *
+     * OTA 下线后端仍保留「本机抖音版本号是否在已声明适配列表内」这一提示，
+     * 但数据来源换成本地：随包分发的 assets/versions.json。
+     */
     suspend fun isSupportVersions(versionName: String): String {
         return withContext(Dispatchers.IO) {
-            try {
-                val versions = ConfigV1.getConfigDir(app).child("versions.json")
-                val text = versions.readText()
-                if (text.contains(versionName)) "版本功能正常" else "自行测试功能"
-            } catch (e: Exception) {
-                "自行测试功能"
-            }
+            runCatching {
+                val versions = Version.getVersions(app)
+                if (versions.isNullOrBlank()) {
+                    "自行测试功能"
+                } else if (versions.contains(versionName)) {
+                    "版本功能正常"
+                } else {
+                    "自行测试功能"
+                }
+            }.getOrDefault("自行测试功能")
         }
     }
 }

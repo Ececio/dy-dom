@@ -18,7 +18,7 @@ object SpeedPlayHelper {
     @ExperimentalStdlibApi
     fun setSpeed(speed: Float) {
         runCatching {
-            val helperClazz = lparam.findClass("X.0BRk") ?: return@runCatching // future
+            val helperClazz = lparam.findClass("X.0BRk") // future
             val helper = helperClazz.findFieldGetValue<Any> { type(helperClazz) }
             val simPlayer = helper?.findMethodInvoke<ISimPlayer> { returnType(ISimPlayer::class.java) }
             simPlayer?.setSpeed(speed)
@@ -32,9 +32,9 @@ object SpeedPlayHelper {
     fun setSpeed(context: Context, aid: String, fragmentTag: String, speed: Float) {
         XplerLog.i("aid: $aid", "fragmentTag: $fragmentTag", "speed: $speed")
 
-        val speedViewModelClazz = lparam.findClass("X.0BUf", hostClassloader) ?: return // future
-        val activityUtilClazz = lparam.findClass("com.bytedance.bdp.bdpbase.util.ActivityUtil", hostClassloader) ?: return
-        val tripleClazz = lparam.findClass("kotlin.Triple", hostClassloader) ?: return
+        val speedViewModelClazz = lparam.findClass("X.0BUf", hostClassloader) // future
+        val activityUtilClazz = lparam.findClass("com.bytedance.bdp.bdpbase.util.ActivityUtil", hostClassloader)
+        val tripleClazz = lparam.findClass("kotlin.Triple", hostClassloader)
 
         val activityIfNecessary = activityUtilClazz.findMethodInvoke<Activity>(context) { name("getActivityIfNecessary") }
         if (activityIfNecessary != null) {
@@ -53,8 +53,8 @@ object SpeedPlayHelper {
 
     // activity must be extends FragmentActivity
     private fun getViewModel(activity: Activity, vm: Class<*>): Any? {
-        val viewModelProvidersClazz = lparam.findClass("androidx.lifecycle.ViewModelProviders", hostClassloader) ?: return null
-        val fragmentActivityClazz = lparam.findClass("androidx.fragment.app.FragmentActivity", hostClassloader) ?: return null
+        val viewModelProvidersClazz = lparam.findClass("androidx.lifecycle.ViewModelProviders", hostClassloader)
+        val fragmentActivityClazz = lparam.findClass("androidx.fragment.app.FragmentActivity", hostClassloader)
         val viewModelProvider = viewModelProvidersClazz.findMethodInvoke<Any>(activity) {
             name("of")
             parameterTypes(listOf(fragmentActivityClazz))

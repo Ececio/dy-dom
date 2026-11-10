@@ -1,7 +1,5 @@
 package io.github.fplus.core.hook
 
-import android.app.ActivityOptions
-import android.content.Intent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
@@ -9,12 +7,10 @@ import android.view.ViewGroup
 import android.widget.TextView
 import androidx.core.view.children
 import androidx.core.view.isVisible
-import com.freegang.extension.activeActivity
 import com.freegang.extension.asOrNull
 import com.freegang.extension.findFieldGetValue
 import com.freegang.extension.firstParentOrNull
 import com.freegang.extension.forEachChild
-import com.freegang.extension.isDarkMode
 import com.freegang.extension.screenSize
 import com.freegang.ktutils.other.KAutomationUtils
 import com.freegang.ktutils.view.KViewUtils
@@ -24,9 +20,9 @@ import com.ss.android.ugc.aweme.feed.ui.PenetrateTouchRelativeLayout
 import io.github.fplus.core.base.BaseHook
 import io.github.fplus.core.config.ConfigV1
 import io.github.fplus.core.helper.DexkitBuilder
+import io.github.fplus.core.helper.ModuleSettingHelper
 import io.github.fplus.core.hook.logic.DownloadLogic
 import io.github.fplus.core.hook.logic.videoInfoText
-import io.github.fplus.core.ui.activity.FreedomSettingActivity
 import io.github.xpler.core.XplerLog
 import io.github.xpler.core.hookBlockRunning
 import io.github.xpler.core.hookClass
@@ -36,6 +32,16 @@ import io.github.xpler.core.thisView
 
 
 class HLongPressLayout : BaseHook() {
+    companion object {
+        /**
+         * 用类名比较替代代理类的 `is`/`as`。
+         * aweme 的代理类是 compileOnly（不打进 APK），运行时类由抖音提供；
+         * 若该类在目标版本不存在，`is`/`as` 会抛 NoClassDefFoundError。
+         * 且这些代码多跑在主线程 post 回调里，无人捕获，会直接打崩抖音。
+         */
+        private const val PENETRATE_TOUCH_RELATIVE_LAYOUT =
+            "com.ss.android.ugc.aweme.feed.ui.PenetrateTouchRelativeLayout"
+    }
     private val config
         get() = ConfigV1.get()
 
@@ -128,14 +134,23 @@ class HLongPressLayout : BaseHook() {
         if (event.x < screenSize.width / 8 || event.x > screenSize.width - screenSize.width / 8)
             return
 
+        // 长按上半部分: 直接唤起模块设置
+        if (config.isLongPressSetting && event.y < screenSize.height / 2) {
+            ModuleSettingHelper.open(view.context)
+            return
+        }
+
         if (!config.isNeatMode)
             return
 
-        if (!config.longPressMode) {
-            if (event.y < screenSize.height / 2)
+        // 上半部分被"长按唤起模块设置"占用时, 清爽模式菜单改为只从下半响应,
+        // 避免同一个手势触发两个入口。
+        val menuOnTop = config.longPressMode && !config.isLongPressSetting
+        if (menuOnTop) {
+            if (event.y > screenSize.height / 2)
                 return
         } else {
-            if (event.y > screenSize.height / 2)
+            if (event.y < screenSize.height / 2)
                 return
         }
 
@@ -270,27 +285,21 @@ class HLongPressLayout : BaseHook() {
             }
 
             "模块设置" -> {
-                val intent = Intent().setClass(view.context, FreedomSettingActivity::class.java)
-                intent.putExtra("isDark", view.context.isDarkMode)
-                val options = ActivityOptions.makeCustomAnimation(
-                    activeActivity,
-                    android.R.anim.slide_in_left,
-                    android.R.anim.slide_out_right
-                )
-                view.context.startActivity(intent, options.toBundle())
+                ModuleSettingHelper.open(view.context)
             }
         }
     }
 
     private fun toggleView(view: View, visible: Boolean) {
-        val viewHolderRootView = view as VideoViewHolderRootView
+        // VideoViewHolderRootView extends ViewGroup，改用系统类型，避免引用代理类
+        val viewHolderRootView = view as? ViewGroup ?: return
         val monitorScrollFrameLayout = viewHolderRootView.children.lastOrNull {
             it.javaClass.name.contains("MonitorScrollFrameLayout")
         }?.asOrNull<ViewGroup>()
 
         // 清爽模式
         monitorScrollFrameLayout?.children?.forEach {
-            if (it is PenetrateTouchRelativeLayout) {
+            if (it.javaClass.name == PENETRATE_TOUCH_RELATIVE_LAYOUT) {
                 it.isVisible = visible
             }
         }
@@ -350,8 +359,10 @@ class HLongPressLayout : BaseHook() {
         // 长按菜单事件拦截
         DexkitBuilder.longPressEventClazz?.also {
             lparam.hookClass(it)
-                .method(
-                    "onLongPressAwemeSure",
+                // 40.6.0 适配：原方法名 onLongPressAwemeSure 在 40.6.0 全库 0 命中，
+                // 且新实现的方法名是混淆的（X/0UWT 里为 LIZ）。故改为按参数类型绑定 ——
+                // (float, float) 是该长按回调接口方法（X/0w4F 的唯一方法 LIZ(FF)V）的签名。
+                .methodAllByParamTypes(
                     Float::class.java,
                     Float::class.java,
                 ) {
@@ -359,13 +370,22 @@ class HLongPressLayout : BaseHook() {
                         val x = args[0] as Float
                         val y = args[1] as Float
 
+                        // 长按上半部分唤起模块设置, 同时拦截抖音原生长按弹窗
+                        if (config.isLongPressSetting && y < screenSize.height / 2) {
+                            setResultVoid()
+                            return@onBefore
+                        }
+
                         if (!config.isNeatMode)
                             return@onBefore
 
                         aweme = thisObject?.findFieldGetValue { type(Aweme::class.java) }
                             ?: HVideoViewHolder.aweme
 
-                        if (config.longPressMode) {
+                        // 与 onLongPress 的区域判定保持一致: 上半被模块设置占用时,
+                        // 清爽模式菜单的拦截区改为下半。
+                        val menuOnTop = config.longPressMode && !config.isLongPressSetting
+                        if (menuOnTop) {
                             if (y < screenSize.height / 2)
                                 setResultVoid()
                         } else {
