@@ -210,11 +210,12 @@ class HLongPressLayout : BaseHook() {
 
             "视频信息" -> {
                 singleLaunchMain("$item") {
-                    val msg = aweme?.videoInfoText() ?: "未知"
+                    val msg = aweme?.videoInfoText(view.context) ?: "未知"
                     showMessageDialog(
                         context = view.context,
                         title = "视频信息",
                         content = msg,
+                        copyText = msg,
                         singleButton = true,
                     )
                 }

@@ -1,5 +1,7 @@
 package io.github.fplus.core.base
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Context.VIBRATOR_SERVICE
 import android.graphics.Color
@@ -161,6 +163,7 @@ abstract class BaseHook : HookEntity() {
         content: CharSequence,
         cancel: CharSequence = "取消",
         confirm: CharSequence = "确定",
+        copyText: CharSequence? = null, // 不为空时显示"复制"按钮
         singleButton: Boolean = false, // 只会响应 onConfirm 方法
         onConfirm: () -> Unit = {},
         onCancel: () -> Unit = {},
@@ -176,14 +179,33 @@ abstract class BaseHook : HookEntity() {
             R.drawable.dialog_background_night,
             R.drawable.dialog_background,
         )
-        if (singleButton) {
-            binding.messageDialogCancel.visibility = View.GONE
-            binding.messageDialogConfirm.background = getDrawable(
+        val showCopy = copyText != null
+        binding.messageDialogCopy.isVisible = showCopy
+        if (showCopy) {
+            binding.messageDialogCopy.background = getDrawable(
                 context,
                 isDarkMode,
-                R.drawable.dialog_single_button_background_night,
-                R.drawable.dialog_single_button_background,
+                R.drawable.dialog_cancel_button_background_night,
+                R.drawable.dialog_cancel_button_background,
             )
+        }
+        if (singleButton) {
+            binding.messageDialogCancel.visibility = View.GONE
+            binding.messageDialogConfirm.background = if (showCopy) {
+                getDrawable(
+                    context,
+                    isDarkMode,
+                    R.drawable.dialog_confirm_button_background_night,
+                    R.drawable.dialog_confirm_button_background,
+                )
+            } else {
+                getDrawable(
+                    context,
+                    isDarkMode,
+                    R.drawable.dialog_single_button_background_night,
+                    R.drawable.dialog_single_button_background,
+                )
+            }
         } else {
             binding.messageDialogCancel.background = getDrawable(
                 context,
@@ -205,6 +227,14 @@ abstract class BaseHook : HookEntity() {
         binding.messageDialogCancel.text = cancel
         binding.messageDialogCancel.setTextColor(getTextColor(isDarkMode))
         binding.messageDialogConfirm.text = confirm
+        copyText?.let { text ->
+            binding.messageDialogCopy.setTextColor(getTextColor(isDarkMode))
+            binding.messageDialogCopy.setOnClickListener {
+                val manager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                manager.setPrimaryClip(ClipData.newPlainText(title, text))
+                showToast(context, "已复制")
+            }
+        }
         binding.messageDialogCancel.setOnClickListener {
             popupDialog!!.dismiss()
             onCancel.invoke()
