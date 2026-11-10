@@ -13,8 +13,6 @@ import com.freegang.extension.readAssetsAsText
 import com.freegang.ktutils.app.KAppUtils
 import com.freegang.ktutils.net.KUrlUtils
 import io.github.fplus.core.config.ConfigV1
-import io.github.fplus.core.config.Version
-import io.github.fplus.core.config.VersionConfig
 import io.github.webdav.WebDav
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -24,9 +22,6 @@ import java.io.IOException
 
 class FreedomSettingVM(application: Application) : AndroidViewModel(application) {
     val app: Application get() = getApplication()
-
-    private var _versionConfig = MutableLiveData<VersionConfig>()
-    val versionConfig: LiveData<VersionConfig> = _versionConfig
 
     // module config
     private lateinit var config: ConfigV1
@@ -142,6 +137,9 @@ class FreedomSettingVM(application: Application) : AndroidViewModel(application)
     private var _longPressMode = MutableLiveData(false)
     val longPressMode: LiveData<Boolean> = _longPressMode
 
+    private var _isLongPressSetting = MutableLiveData(true)
+    val isLongPressSetting: LiveData<Boolean> = _isLongPressSetting
+
     private var _isCommentColorMode = MutableLiveData(false)
     val isCommentColorMode: LiveData<Boolean> = _isCommentColorMode
 
@@ -178,16 +176,9 @@ class FreedomSettingVM(application: Application) : AndroidViewModel(application)
     private var _isDisablePlugin = MutableLiveData(false)
     val isDisablePlugin: LiveData<Boolean> = _isDisablePlugin
 
+    private var _isAdBlock = MutableLiveData(true)
+    val isAdBlock: LiveData<Boolean> = _isAdBlock
 
-    // 检查版本更新
-    fun checkVersion() {
-        if (KAppUtils.isAppInDebug(app)) return // 测试包不检查更新
-        if (app.appVersionName.contains(Regex("beta|alpha"))) return // 非release包不检查更新
-        viewModelScope.launch {
-            val version = withContext(Dispatchers.IO) { Version.getRemoteReleasesLatest() }
-            if (version != null) _versionConfig.value = version
-        }
-    }
 
     // 读取模块配置
     fun loadConfig() {
@@ -218,6 +209,7 @@ class FreedomSettingVM(application: Application) : AndroidViewModel(application)
             setDialogFilterKeywords(config.dialogFilterKeywords)
             changeIsNeatMode(config.isNeatMode)
             setLongPressMode(config.longPressMode)
+            changeIsLongPressSetting(config.isLongPressSetting)
             changeIsAutoPlay(config.isAutoPlay)
             setAddAutoPlayButton(config.addAutoPlayButton)
             setDefaultAutoPlay(config.defaultAutoPlay)
@@ -240,6 +232,7 @@ class FreedomSettingVM(application: Application) : AndroidViewModel(application)
             setKeepAppBackend(config.keepAppBackend)
             changeIsCrashTolerance(config.isCrashTolerance)
             changeIsDisablePlugin(config.isDisablePlugin)
+            changeIsAdBlock(config.isAdBlock)
         }
     }
 
@@ -469,6 +462,12 @@ class FreedomSettingVM(application: Application) : AndroidViewModel(application)
         config.longPressMode = value
     }
 
+    // 长按上半部分打开模块设置
+    fun changeIsLongPressSetting(value: Boolean) {
+        _isLongPressSetting.value = value
+        config.isLongPressSetting = value
+    }
+
     // 评论区颜色模式
     fun changeIsCommentColorMode(value: Boolean) {
         _isCommentColorMode.value = value
@@ -578,6 +577,12 @@ class FreedomSettingVM(application: Application) : AndroidViewModel(application)
     fun changeIsDisablePlugin(value: Boolean) {
         _isDisablePlugin.value = value
         config.isDisablePlugin = value
+    }
+
+    // 广告拦截
+    fun changeIsAdBlock(value: Boolean) {
+        _isAdBlock.value = value
+        config.isAdBlock = value
     }
 
     // 保存版本信息

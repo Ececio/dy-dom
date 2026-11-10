@@ -21,6 +21,7 @@ import com.freegang.extension.isDarkMode
 import com.freegang.extension.parentView
 import com.freegang.extension.postRunning
 import com.freegang.extension.removeInParent
+import com.freegang.ktutils.log.KLogCat
 import com.ss.android.ugc.aweme.homepage.ui.titlebar.MainTitleBar
 import com.ss.android.ugc.aweme.homepage.ui.view.MainTabStripScrollView
 import com.ss.android.ugc.aweme.main.MainActivity
@@ -33,6 +34,8 @@ import io.github.fplus.core.hook.logic.DownloadLogic
 import io.github.fplus.core.ui.activity.FreedomSettingActivity
 import io.github.xpler.core.XplerLog
 import io.github.xpler.core.hookBlockRunning
+import io.github.xpler.core.hookClass
+import io.github.xpler.core.lparam
 import io.github.xpler.core.moduleVersionName
 import io.github.xpler.core.proxy.MethodParam
 import io.github.xpler.core.thisActivity
@@ -41,6 +44,24 @@ import kotlinx.coroutines.delay
 
 class HMainActivity : BaseHook() {
     companion object {
+        /**
+         * 用类名比较替代 `is` 检查，避免代理类在当前抖音版本不存在时抛 NoClassDefFoundError。
+         *
+         * 40.6.0 适配：这两个类都搬了包 ——
+         *   旧：com.ss.android.ugc.aweme.homepage.ui.view.MainTabStripScrollView（已不存在）
+         *   旧：com.ss.android.ugc.aweme.homepage.ui.titlebar.MainTitleBar（已不存在）
+         * 新路径见下（均在 classes37）。原常量在 40.6.0 恒不匹配，导致 mainTitleBar 为 null、
+         * 「隐藏顶部选项」整体空转。
+         */
+        private const val MAIN_TAB_STRIP_SCROLL_VIEW =
+            "com.ss.android.ugc.aweme.homepage.tab.top.ui.tabstrip.scroll.MainTabStripScrollView"
+        private const val MAIN_TITLE_BAR =
+            "com.ss.android.ugc.aweme.homepage.tab.top.ui.titlebar.MainTitleBar"
+
+        /** 顶部单个 tab 项（40.6.0 实测类名，动态创建） */
+        private const val TOP_TAB_ITEM_VIEW =
+            "com.ss.android.ugc.aweme.homepage.tab.top.ui.tabstrip.item.HomeTopTabItemViewNew"
+
         @SuppressLint("StaticFieldLeak")
         var mainTitleBar: View? = null
 
@@ -95,9 +116,66 @@ class HMainActivity : BaseHook() {
             DouYinMain.timerExitHelper?.restart()
 
             openAutoPlay(activity)
+            hookTopTabItems()
         }.onFailure {
             XplerLog.e(it)
         }
+    }
+
+    /**
+     * 顶部 tab 项的**动态**隐藏。
+     *
+     * 40.6.0 的顶部 tab 项（`HomeTopTabItemViewNew`）是动态创建/重建的，而 [initMainTitleBar]
+     * 只在 onResume 跑一次。真机日志证实：`initMainTitleBar` 被调用 3 次，但前两次时
+     * `mainTitleBar` 底下还是空的，子项是之后才建出来的 —— 所以那种一次性隐藏会被重建覆盖，
+     * 表现为「开关打开了但 tab 没隐藏」。
+     *
+     * 这里改挂到 tab 项自己的 `setContentDescription` 上：文案刚设好就判定并隐藏，
+     * 无论抖音重建多少次都能跟上。
+     */
+    private fun hookTopTabItems() {
+        runCatching {
+            // 注意：**不能**挂 setContentDescription —— 那是 View 的方法，HomeTopTabItemViewNew
+            // 自己并没有声明它；而 xpler 的 methodAllByParamTypes 只检索 declaredMethods，
+            // 对继承方法会静默找不到（这个坑之前踩过一次）。
+            // 该自己声明了 onAttachedToWindow，改挂这里。
+            lparam.hookClass(TOP_TAB_ITEM_VIEW)
+                .method("onAttachedToWindow") {
+                    onAfter {
+                        val view = thisObject as? View ?: return@onAfter
+                        // 延迟一拍：onAttachedToWindow 时 contentDescription 通常还没设好
+                        view.postDelayed({
+                            runCatching { applyTopTabHide(view) }.onFailure { XplerLog.e(it) }
+                        }, 150L)
+                    }
+                }
+        }.onFailure {
+            XplerLog.e(it)
+        }
+    }
+
+    /** 按关键词判断并隐藏单个顶部 tab 项 */
+    private fun applyTopTabHide(view: View) {
+        if (!config.isHideTopTab) return
+        val desc = view.contentDescription?.toString() ?: return
+        val regex = topTabKeywordsRegex() ?: return
+        if (desc.contains(regex)) {
+            view.isVisible = false
+            KLogCat.tagI("HMainActivity", "已隐藏顶部选项: '$desc'")
+        }
+    }
+
+    /** 把用户配置的关键词串转成正则（半角/全角逗号、空白都归一化） */
+    private fun topTabKeywordsRegex(): Regex? {
+        val raw = config.hideTopTabKeywords
+        if (raw.isBlank()) return null
+        return raw
+            .replace("，", ",")
+            .replace("\\s".toRegex(), "")
+            .removePrefix(",").removeSuffix(",")
+            .replace(",", "|")
+            .replace("\\|+".toRegex(), "|")
+            .toRegex()
     }
 
     @OnAfter("onResume")
@@ -143,51 +221,56 @@ class HMainActivity : BaseHook() {
 
     private fun initView(activity: Activity) {
         activity.contentView.postRunning {
-            it.forEachChild { child ->
-                // 新版本顶栏不居中
-                if (child is MainTabStripScrollView) {
-                    val lp = child.layoutParams
-                    if (lp is RelativeLayout.LayoutParams) {
-                        child.layoutParams = lp.apply {
-                            this.addRule(RelativeLayout.CENTER_IN_PARENT)
+            // 整体加保护：下面任何一处类解析失败都不该把抖音打崩
+            runCatching {
+                it.forEachChild { child ->
+                    // 注意：这里不能写 `child is MainTabStripScrollView`。
+                    // aweme 里的代理类是 compileOnly（不打进 APK），运行时由抖音提供；
+                    // 而 MainTabStripScrollView 在抖音 40.x 已不存在，`is` 检查会抛
+                    // NoClassDefFoundError，且这里跑在 post 回调里没有捕获 —— 直接把抖音打崩。
+                    // 改用类名比较，不触发类解析。
+                    if (child.javaClass.name == MAIN_TAB_STRIP_SCROLL_VIEW) {
+                        val lp = child.layoutParams
+                        if (lp is RelativeLayout.LayoutParams) {
+                            child.layoutParams = lp.apply {
+                                this.addRule(RelativeLayout.CENTER_IN_PARENT)
+                            }
                         }
+                    }
+
+                    if (child.javaClass.name == MAIN_TITLE_BAR) {
+                        mainTitleBar = child
+                    }
+
+                    if (DexkitBuilder.mainBottomTabViewClazz?.name == child.javaClass.name) {
+                        bottomTabView = child
+                    }
+
+                    if (child.javaClass.name.contains("DisallowInterceptRelativeLayout")) {
+                        disallowInterceptRelativeLayout = child
                     }
                 }
 
-                if (child is MainTitleBar) {
-                    mainTitleBar = child
-                }
-
-                if (DexkitBuilder.mainBottomTabViewClazz?.name == child.javaClass.name) {
-                    bottomTabView = child
-                }
-
-                if (child.javaClass.name.contains("DisallowInterceptRelativeLayout")) {
-                    disallowInterceptRelativeLayout = child
-                }
+                initMainTitleBar()
+                initBottomTabView()
+                initDisallowInterceptRelativeLayout()
+            }.onFailure {
+                XplerLog.e(it)
             }
-
-            initMainTitleBar()
-            initBottomTabView()
-            initDisallowInterceptRelativeLayout()
         }
     }
 
     private fun initMainTitleBar() {
-        // 隐藏顶部选项卡
+        // 兜底：onResume 时若 tab 项已存在就直接隐藏。
+        // 主体逻辑在 hookTopTabItems() —— tab 项是动态建的，只在这里隐藏会被重建覆盖。
         if (config.isHideTopTab) {
-            val keywordsRegex = config.hideTopTabKeywords
-                .replace("，", ",")
-                .replace("\\s".toRegex(), "")
-                .removePrefix(",").removeSuffix(",")
-                .replace(",", "|")
-                .replace("\\|+".toRegex(), "|")
-                .toRegex()
-
-            mainTitleBar?.forEachChild { child ->
-                val desc = "${child.contentDescription}"
-                if (desc.contains(keywordsRegex)) {
-                    child.isVisible = false
+            val keywordsRegex = topTabKeywordsRegex()
+            if (keywordsRegex != null) {
+                mainTitleBar?.forEachChild { child ->
+                    val desc = "${child.contentDescription}"
+                    if (desc.isNotEmpty() && desc != "null" && desc.contains(keywordsRegex)) {
+                        child.isVisible = false
+                    }
                 }
             }
         }

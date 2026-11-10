@@ -18,6 +18,12 @@ import io.github.xpler.core.proxy.MethodParam
 class HActivity : BaseHook() {
     private val config get() = ConfigV1.get()
 
+    companion object {
+        /** 横屏视频页；该页在 focus 变化时需要强制全沉浸，见 onWindowFocusChangedAfter */
+        private const val LANDSCAPE_FEED_ACTIVITY =
+            "com.ss.android.ugc.aweme.longervideo.landscape.home.activity.LandscapeFeedActivity"
+    }
+
     override fun setTargetClass(): Class<*> {
         return Activity::class.java
     }
@@ -65,6 +71,20 @@ class HActivity : BaseHook() {
 
                 if (activity is FreedomSettingActivity)
                     return@singleLaunchMain
+
+                // 横屏视频页强制全沉浸（不看用户配置）。
+                // 这里补的原因：本项目早先在 HLandscapeFeedActivity 里用
+                // @OnAfter("onWindowFocusChanged") 想达到同样效果，但该方法定义在父类
+                // android.app.Activity 上，而 xpler 只检索目标类的 declaredMethods
+                // （见 HookEntity.getHookTargetAllMethods），因此那个 hook 从未绑上。
+                if (activity.javaClass.name == LANDSCAPE_FEED_ACTIVITY) {
+                    ImmersiveHelper.immersive(
+                        activity = activity,
+                        hideStatusBar = true,
+                        hideNavigationBars = true,
+                    )
+                    return@singleLaunchMain
+                }
 
                 immersive(activity)
             }

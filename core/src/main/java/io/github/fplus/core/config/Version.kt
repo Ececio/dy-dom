@@ -1,63 +1,61 @@
 package io.github.fplus.core.config
 
-import android.util.Base64
-import com.freegang.extension.firstJsonObject
-import com.freegang.extension.getLongOrDefault
-import com.freegang.extension.getStringOrDefault
-import com.freegang.extension.parseJSON
-import com.freegang.ktutils.net.KHttpUtils
+import android.content.Context
+import com.freegang.extension.child
+import io.github.fplus.ProjectInfo
+import java.io.File
 
-
+/**
+ * 版本信息。
+ *
+ * 说明：内置的远程版本检查（OTA）已整体下线。
+ * 本对象不再持有任何 GitHub API 地址，也不再发起任何网络请求，
+ * 只负责维护一份随包分发的本地版本适配列表。
+ *
+ * 版本适配列表的取用顺序：
+ * 1. 配置目录下的缓存副本（首次由 assets 释放）
+ * 2. 直接读 assets 内的原始副本
+ */
 object Version {
-    // Api
-    private const val githubReleasesApi = "https://api.github.com/repos/GangJust/FreedomPlus/releases/latest"
 
-    // private const val githubVersionApi = "https://raw.githubusercontent.com/GangJust/FreedomPlus/master/versions.json"
-    private const val githubVersionApi = "https://api.github.com/repos/GangJust/FreedomPlus/contents/versions.json?ref=master"
-
-    // 获取Github最后一次 releases
-    fun getRemoteReleasesLatest(): VersionConfig? {
-        val get = KHttpUtils.get(githubReleasesApi)
-        if (get.isEmpty()) return null
-        if (!get.contains("browser_download_url")) return null
-        return parseVersionConfig(get)
+    private fun configFile(context: Context): File {
+        return context.filesDir
+            .child("fplus")
+            .child(ProjectInfo.VERSIONS_ASSET)
     }
 
-    // 解析出版本信息
-    private fun parseVersionConfig(s: String): VersionConfig {
-        val json = s.parseJSON()
-        return VersionConfig(
-            htmlUrl = json.getStringOrDefault("html_url"),
-            tagName = json.getStringOrDefault("tag_name"),
-            name = json.getStringOrDefault("name"),
-            body = json.getStringOrDefault("body"),
-            size = json.getJSONArray("assets").firstJsonObject().getLongOrDefault("size"),
-            createdAt = json.getJSONArray("assets").firstJsonObject().getStringOrDefault("created_at"),
-            updatedAt = json.getJSONArray("assets").firstJsonObject().getStringOrDefault("updated_at"),
-            browserDownloadUrl = json.getJSONArray("assets").firstJsonObject().getStringOrDefault("browser_download_url"),
-        )
-    }
+    /**
+     * 从包内释放版本适配列表到配置目录（仅在缓存不存在或为空时写入）。
+     */
+    fun ensureLocalVersions(context: Context) {
+        runCatching {
+            val cache = configFile(context)
+            if (cache.exists() && cache.length() > 0L) return
 
-    // 获取适配版本列表
-    fun getVersions(): String? {
-        return try {
-            val body = KHttpUtils.get(githubVersionApi)
-            val content = body.parseJSON().getString("content")
-            Base64.decode(content, Base64.DEFAULT).toString(Charsets.UTF_8)
-        } catch (e: Exception) {
-            null
+            val text = context.assets.open(ProjectInfo.VERSIONS_ASSET).use {
+                it.readBytes().decodeToString()
+            }
+            if (text.isBlank()) return
+
+            cache.parentFile?.mkdirs()
+            cache.writeText(text)
         }
     }
-}
 
-// 版本信息
-data class VersionConfig(
-    val htmlUrl: String,
-    val tagName: String,
-    val name: String,
-    val body: String,
-    val size: Long,
-    val createdAt: String,
-    val updatedAt: String,
-    val browserDownloadUrl: String,
-)
+    /**
+     * 读取版本适配列表。仅读本地，不联网。
+     */
+    fun getVersions(context: Context): String? {
+        return runCatching {
+            val cache = configFile(context)
+            if (cache.exists() && cache.length() > 0L) {
+                return cache.readText()
+            }
+
+            val text = context.assets.open(ProjectInfo.VERSIONS_ASSET).use {
+                it.readBytes().decodeToString()
+            }
+            if (text.isBlank()) null else text
+        }.getOrNull()
+    }
+}

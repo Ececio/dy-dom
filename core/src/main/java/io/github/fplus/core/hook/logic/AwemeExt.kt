@@ -1,234 +1,149 @@
 package io.github.fplus.core.hook.logic
 
 import com.freegang.extension.format
+import com.freegang.extension.getStringOrDefault
+import com.freegang.extension.parseJSON
+import com.freegang.ktutils.log.KLogCat
+import com.freegang.ktutils.net.KHttpUtils
 import com.ss.android.ugc.aweme.feed.model.Aweme
+import com.ss.android.ugc.aweme.feed.model.Video
 import com.ss.ugc.aweme.ImageUrlStruct
-import kotlinx.coroutines.CancellationException
+import io.github.xpler.core.XplerLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
-import java.net.URLEncoder
+import java.lang.reflect.Field
 import java.util.Date
-import java.util.Locale
-
-private const val AREA_LIST_API = "https://dmfw.mca.gov.cn/9095/xzqh/getList?code="
-private const val BROWSER_UA =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 
 fun Aweme.createDate(): String {
     return Date(this.createTime * 1000).format()
 }
 
-/**
- * 视频信息：作者、作品 ID、属地、发布时间、IP 属地、POI、时长、分辨率、音乐和描述。
- */
-suspend fun Aweme.videoInfoText(): String {
-    val lines = mutableListOf<String>()
+suspend fun Aweme.cityInfo(): String {
+    return withContext(Dispatchers.IO) {
+        runCatching {
+            val result = KHttpUtils.get("http://api.ip33.com/Area_Code/GetArea/?code=$city")
+            val areaJson = result.parseJSON()
+            val province = areaJson.getStringOrDefault("province")
+            val city = areaJson.getStringOrDefault("city")
+            val county = areaJson.getStringOrDefault("county")
 
-    author?.let { user ->
-        val name = user.nickname?.takeIf { it.isNotBlank() }
-            ?: user.uniqueId?.takeIf { it.isNotBlank() }
-            ?: user.shortId?.takeIf { it.isNotBlank() }
-        val uid = user.uid?.takeIf { it.isNotBlank() }
-        if (!name.isNullOrBlank()) {
-            lines += if (uid != null) "作者: $name ($uid)" else "作者: $name"
+            "$province $city $county".trim()
+        }.getOrElse {
+            XplerLog.e(it)
+            "获取失败"
         }
     }
-
-    aid?.takeIf { it.isNotBlank() }?.let { lines += "作品ID: $it" }
-    lines += "视频属地: ${cityInfo()}"
-    areaApiInfo()?.let { lines += "区划接口: $it" }
-    lines += "发布时间: ${createDate()}"
-
-    ipAttribution?.takeIf { it.isNotBlank() }?.let { lines += "IP属地: $it" }
-
-    poiInfo()?.let { info ->
-        info.getTextValue("poiName", "poi_name", "name")?.let { lines += "POI: $it" }
-
-        val addressInfo = info.getFieldValue("addressInfo", "address_info")
-        val codes = listOfNotNull(
-            addressInfo?.getTextValue("cityCode", "city_code")?.let { "城市码 $it" },
-            addressInfo?.getTextValue("adCodeV2", "ad_code_v2", "adCode")?.let { "区县码 $it" },
-        ).joinToString(" / ")
-        if (codes.isNotBlank()) lines += "POI编码: $codes"
-    }
-
-    duration?.takeIf { it > 0 }?.let { lines += "时长: ${formatDuration(it)}" }
-
-    video?.let {
-        if (it.width > 0 && it.height > 0) {
-            lines += "分辨率: ${it.width}×${it.height}"
-        }
-    }
-
-    music?.let {
-        val title = it.musicName?.takeIf { value -> value.isNotBlank() }
-            ?: it.musicTitle?.takeIf { value -> value.isNotBlank() }
-        val artist = it.authorName?.takeIf { value -> value.isNotBlank() }
-            ?: it.ownerNickName?.takeIf { value -> value.isNotBlank() }
-        if (!title.isNullOrBlank()) {
-            lines += if (!artist.isNullOrBlank()) "音乐: $title - $artist" else "音乐: $title"
-        }
-    }
-
-    desc?.takeIf { it.isNotBlank() }?.let {
-        lines += "描述: ${it.take(120)}${if (it.length > 120) "..." else ""}"
-    }
-
-    return lines.joinToString("\n")
 }
 
 /**
- * 读取作品自带的 poi_info 地址，优先级:
- * address_info(province/city/district) > poi_name > Aweme.city > ipAttribution。
+ * 按"原始 JSON 键"从 [Video] 上取播放地址列表。
+ *
+ * 背景（40.6.0 字段混淆）：
+ * `Video` 的播放地址字段被整体混淆成单字母 ——
+ * `playAddr` -> `a`、`playAddrH265` -> `b`、`h264PlayAddr` -> `d`。
+ * 任何按原字段名的访问（编译期字段引用 / 反射）都会抛
+ * `NoSuchFieldError: No instance field playAddr ...`，导致下载入口整条链路崩溃。
+ *
+ * 稳定锚点是 Gson 的 `@SerializedName` 注解：注解值保存着原始 JSON 键
+ * （`play_addr` / `play_addr_265` / `play_addr_h264`），字段名怎么混淆都不受影响；
+ * 命中的字段值仍是 `UrlModel` 子类，而 `UrlModel.urlList` 未被混淆，可直接反射读取。
+ *
+ * 查找顺序：
+ *   1. `@SerializedName` 注解值匹配（40.6.0 及以后）；
+ *   2. 原字段名匹配（字段未混淆的旧版本）；
+ *   3. 兜底：声明类型含 `VideoUrlModel` 且 urlList 非空的字段。
+ *
+ * @param jsonKeys    按优先级排列的原始 JSON 键
+ * @param legacyNames 按优先级排列的旧版本字段名
  */
-fun Aweme.cityInfo(): String {
-    val info = poiInfo()
-    val addressInfo = info?.getFieldValue("addressInfo", "address_info")
+fun Video.findVideoUrlList(
+    jsonKeys: List<String>,
+    legacyNames: List<String> = emptyList(),
+): List<String>? {
+    val fields = allFields()
 
-    addressInfo?.areaText()?.takeIf { it.isNotBlank() }?.let { return it }
-    info?.getTextValue("poiName", "poi_name", "name")?.let { return it }
-    getTextValue("city")?.let { return it }
-    getTextValue("ipAttribution", "ip_attribution")?.let { return it }
+    for (key in jsonKeys) {
+        val field = fields.firstOrNull { serializedNameOf(it) == key } ?: continue
+        val urlList = urlListOf(field, this)?.takeIf { it.isNotEmpty() } ?: continue
+        return urlList
+    }
 
-    return "未知"
+    for (name in legacyNames) {
+        val field = fields.firstOrNull { it.name == name } ?: continue
+        val urlList = urlListOf(field, this)?.takeIf { it.isNotEmpty() } ?: continue
+        return urlList
+    }
+
+    // 兜底：字段结构再次变化时，只认 VideoUrlModel 类型的字段，
+    // 避免误把 cover / background 等其它 UrlModel 当成播放地址。
+    val fallback = fields.firstNotNullOfOrNull { field ->
+        if (!field.type.name.contains("VideoUrlModel")) return@firstNotNullOfOrNull null
+        urlListOf(field, this)?.takeIf { it.isNotEmpty() }
+    }
+
+    if (fallback == null) {
+        KLogCat.tagI("VideoUrl", "未命中播放地址字段, jsonKeys=$jsonKeys, fields=${fields.size}")
+    }
+    return fallback
 }
 
-/**
- * 用作品自带的行政区划代码查询民政部地名信息库，单独作为一个字段展示:
- * https://dmfw.mca.gov.cn/9095/xzqh/getList?code=510100
- */
-suspend fun Aweme.areaApiInfo(): String? {
-    val info = poiInfo()
-    val addressInfo = info?.getFieldValue("addressInfo", "address_info")
-
-    val code = addressInfo?.getTextValue("cityCode", "city_code").asAreaCode()
-        ?: addressInfo?.getTextValue("adCodeV2", "ad_code_v2", "adCode").asAreaCode()
-        ?: getTextValue("city").asAreaCode()
-
-    return code?.let { queryAreaName(it) }
+/** [Video] 及其父类链上的全部字段（字段名被混淆，只能按注解/类型筛选） */
+private fun Video.allFields(): List<Field> {
+    val fields = mutableListOf<Field>()
+    var clazz: Class<*>? = javaClass
+    while (clazz != null && clazz != Any::class.java) {
+        val current = clazz
+        runCatching { fields += current.declaredFields }
+        clazz = current.superclass
+    }
+    return fields
 }
 
-private fun Aweme.poiInfo(): Any? = getFieldValue("poiInfo", "poi_info")
-
-private fun Any.areaText(): String {
-    return listOf("province", "city", "district")
-        .mapNotNull { getTextValue(it) }
-        .distinct()
-        .joinToString(" ")
+/** 读字段上的 `@SerializedName` 值；按注解类名比对，不引入编译期 gson 依赖 */
+private fun serializedNameOf(field: Field): String? {
+    return runCatching {
+        field.annotations
+            .firstOrNull { it.annotationClass.java.name == "com.google.gson.annotations.SerializedName" }
+            ?.let { it.annotationClass.java.getMethod("value").invoke(it) as? String }
+    }.getOrNull()
 }
 
-private fun String?.asAreaCode(): String? {
-    val value = this?.trim() ?: return null
-    return value.takeIf { it.length >= 6 && it.all(Char::isDigit) }
-}
-
-private suspend fun queryAreaName(code: String): String? = withContext(Dispatchers.IO) {
-    try {
-        val url = AREA_LIST_API + URLEncoder.encode(code, "UTF-8")
-        val json = JSONObject(httpGet(url))
-        if (json.optInt("status", 0) != 200) {
+/** 读取字段值，并从其 UrlModel 中取出 urlList（`urlList` 字段名未被混淆） */
+private fun urlListOf(field: Field, target: Any): List<String>? {
+    return runCatching {
+        field.isAccessible = true
+        val value = field.get(target)
+        if (value == null) {
             null
         } else {
-            json.optJSONObject("data")
-                ?.optString("name")
-                ?.takeIf { it.isNotBlank() }
+            @Suppress("UNCHECKED_CAST")
+            value.javaClass.getField("urlList").get(value) as? List<String>
         }
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: Exception) {
-        null
-    }
-}
-
-private fun httpGet(url: String, cookie: String? = null, allowRetry: Boolean = true): String {
-    val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-        requestMethod = "GET"
-        connectTimeout = 8000
-        readTimeout = 8000
-        setRequestProperty("User-Agent", BROWSER_UA)
-        setRequestProperty("Accept", "application/json, text/plain, */*")
-        setRequestProperty("Accept-Language", "zh-CN,zh;q=0.9")
-        setRequestProperty("Referer", "https://dmfw.mca.gov.cn/")
-        if (!cookie.isNullOrBlank()) {
-            setRequestProperty("Cookie", cookie)
-        }
-    }
-
-    return try {
-        val responseCode = connection.responseCode
-        if (responseCode == HttpURLConnection.HTTP_FORBIDDEN && allowRetry) {
-            val wafCookie = connection.headerFields
-                .entries
-                .firstOrNull { it.key?.equals("Set-Cookie", ignoreCase = true) == true }
-                ?.value
-                ?.firstOrNull { it.startsWith("https_waf_cookie=") }
-                ?.substringBefore(';')
-
-            connection.disconnect()
-            if (!wafCookie.isNullOrBlank()) {
-                return httpGet(url, wafCookie, allowRetry = false)
-            }
-        }
-
-        if (responseCode !in 200..299) {
-            error("HTTP $responseCode")
-        }
-
-        connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-    } finally {
-        connection.disconnect()
-    }
-}
-
-private fun formatDuration(milliseconds: Int): String {
-    val totalSeconds = milliseconds / 1000
-    val hours = totalSeconds / 3600
-    val minutes = (totalSeconds % 3600) / 60
-    val seconds = totalSeconds % 60
-    return if (hours > 0) {
-        String.format(Locale.ROOT, "%d:%02d:%02d", hours, minutes, seconds)
-    } else {
-        String.format(Locale.ROOT, "%d:%02d", minutes, seconds)
-    }
-}
-
-private fun Any.getFieldValue(vararg names: String): Any? {
-    var type: Class<*>? = javaClass
-    while (type != null) {
-        val current = type
-        for (name in names) {
-            val field = runCatching { current.getDeclaredField(name) }.getOrNull() ?: continue
-            val value = runCatching {
-                field.isAccessible = true
-                field.get(this)
-            }.getOrNull()
-            if (value != null) return value
-        }
-        type = current.superclass
-    }
-    return null
-}
-
-private fun Any.getTextValue(vararg names: String): String? {
-    return getFieldValue(*names)?.toString()?.takeIf { it.isNotBlank() }
+    }.getOrNull()
 }
 
 fun Aweme.getH265VideoUrlList(): List<String> {
     val video = video ?: return emptyList()
-    return video.playAddrH265?.urlList ?: emptyList()
+    return video.findVideoUrlList(
+        jsonKeys = listOf("play_addr_265", "play_addr_h264", "play_addr"),
+        legacyNames = listOf("playAddrH265", "h264PlayAddr", "playAddr"),
+    ) ?: emptyList()
 }
 
 fun Aweme.getH264VideoUrlList(): List<String> {
     val video = video ?: return emptyList()
-    return video.h264PlayAddr?.urlList ?: emptyList()
+    return video.findVideoUrlList(
+        jsonKeys = listOf("play_addr_h264", "play_addr"),
+        legacyNames = listOf("h264PlayAddr", "playAddr"),
+    ) ?: emptyList()
 }
 
 fun Aweme.getAutoVideoUrlList(): List<String> {
     val video = video ?: return emptyList()
-    return video.playAddr?.urlList ?: emptyList()
+    return video.findVideoUrlList(
+        jsonKeys = listOf("play_addr", "play_addr_h264", "play_addr_265"),
+        legacyNames = listOf("playAddr", "h264PlayAddr", "playAddrH265"),
+    ) ?: emptyList()
 }
 
 fun Aweme.getImageUrlList(): List<ImageUrlStruct> {

@@ -44,6 +44,10 @@ import io.github.xpler.loader.hostClassloader
 
 class HVideoViewHolder : BaseHook() {
     companion object {
+        /** 用类名比较替代代理类的 `is`/`as`，避免其在目标抖音版本不存在时抛 NoClassDefFoundError */
+        private const val FEED_RIGHT_SCALE_VIEW =
+            "com.ss.android.ugc.aweme.feed.ui.FeedRightScaleView"
+
         @get:Synchronized
         @set:Synchronized
         var aweme: Aweme? = null
@@ -141,11 +145,14 @@ class HVideoViewHolder : BaseHook() {
         }
     }
 
-    private fun getFeedRightScaleView(params: MethodParam): FeedRightScaleView? {
+    private fun getFeedRightScaleView(params: MethodParam): ViewGroup? {
         val views = params.thisObject?.findField {
             type(View::class.java, true)
-        }?.getValues(params.thisObject)
-        return views?.firstOrNull { it is FeedRightScaleView }?.asOrNull()
+        }?.getValues(params.thisObject) ?: return null
+        // 用类名比较替代 `it is FeedRightScaleView`：aweme 的代理类是 compileOnly，
+        // 不打进 APK，运行时由抖音提供；若该类在目标版本不存在，`is`/`as` 会抛
+        // NoClassDefFoundError，而这里跑在 post 回调中无人捕获，会直接打崩抖音。
+        return views.firstOrNull { (it as? View)?.javaClass?.name == FEED_RIGHT_SCALE_VIEW } as? ViewGroup
     }
 
     private fun getFragment(params: MethodParam): Any? {
