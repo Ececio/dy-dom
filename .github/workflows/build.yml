@@ -32,8 +32,8 @@ jobs:
         with:
           submodules: recursive
 
-      # 仓库里的 ktutils / xpler 没有以 git submodule 形式提交（.gitmodules 存在但缺少 gitlink），
-      # 这里兜底克隆并固定版本；如果以后正确添加了 submodule，这一步会自动跳过。
+      # ktutils 不纳入版本管理，这里按固定 commit 克隆；xpler 已随仓库提供（含 40.6.0 适配改动），
+      # 仅在缺失时兜底克隆。
       - name: Clone missing dependencies
         run: |
           if [ ! -f ktutils/build.gradle ]; then
