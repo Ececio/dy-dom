@@ -2,7 +2,7 @@
 
 > 抖音去广告与功能增强的 Xposed / LSPosed 模块，开源、无广告、不联网上传任何数据。
 
-[![GitHub release](https://img.shields.io/github/v/release/hsien926/FreedomPlus?display_name=release)](https://github.com/hsien926/FreedomPlus/releases)
+[![GitHub release](https://img.shields.io/github/v/release/Ececio/dy-dom?display_name=release)](https://github.com/Ececio/dy-dom/releases)
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue)](./LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Android%208.0%2B%20(API%2024%2B)-green)]()
 
@@ -77,7 +77,7 @@
 
 ### 步骤
 
-1. 从 [Releases](https://github.com/hsien926/FreedomPlus/releases) 下载 `FreedomPlus-1.3.8-release.apk` 并安装；
+1. 从 [Releases](https://github.com/Ececio/dy-dom/releases) 下载 `FreedomPlus-1.3.8-release.apk` 并安装；
 2. 打开 LSPosed，在「模块」中启用 **FreedomPlus**；
 3. 在作用域中勾选**抖音**（`com.ss.android.ugc.aweme`，极速版 / 火山版为独立包名，需另行勾选）；
 4. 给抖音授予**文件读写权限** —— 模块需要该权限读取配置与写入下载文件；
@@ -114,7 +114,7 @@
 环境要求与完整步骤见 [docs/构建.md](docs/构建.md)。最短路径：
 
 ```bash
-git clone https://github.com/hsien926/FreedomPlus.git
+git clone https://github.com/Ececio/dy-dom.git
 cd FreedomPlus
 
 # 安装 JDK 17 与 Android SDK（需包含 platforms;android-34）
@@ -164,7 +164,7 @@ Windows 下请使用 `gradlew.bat`。
 - 本项目代码开源，供开发者学习参考使用；
 - 欢迎 issues 与 pull requests；
 - 请遵守开源协议复制与修改本项目代码，并在衍生作品中保留许可与来源说明；
-- 若认为本项目内容存在不当之处，请通过 [Issues](https://github.com/hsien926/FreedomPlus/issues) 联系。
+- 若认为本项目内容存在不当之处，请通过 [Issues](https://github.com/Ececio/dy-dom/issues) 联系。
 
 ---
 

@@ -10,10 +10,10 @@ package io.github.fplus
 object ProjectInfo {
 
     /** GitHub 账号 */
-    const val OWNER = "hsien926"
+    const val OWNER = "Ececio"
 
     /** 仓库名 */
-    const val REPO = "FreedomPlus"
+    const val REPO = "dy-dom"
 
     /** 本模块上游基座（二次开发所依据的上游仓库） */
     const val BASE_REPO_URL = "https://github.com/xiaodesetingyongzhanghao/FreedomPlus"
