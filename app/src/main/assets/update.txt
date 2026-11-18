@@ -1,3 +1,10 @@
+v1.3.16
+「下载所有作品」改为直接调用抖音自己的 PostAwemeRepo 请求 weak post（主页作品列表真实接口），参数由 App 运行时构造，不再手工拼
+weak post 参数实体按方法签名动态获取（混淆类名每版会变），6 参构造 (0, userId, secUid, cursor, count) 对应「作品」页
+按 ID 补取详情时同时解析 items / filterList / verificationFilterList，被风控筛掉但仍返回的作品也能拿到
+修复 suspend 接口调用时报 CoroutineContext 空指针（宿主 kotlin-stdlib 被裁剪，改用动态代理构造空 context）
+日志新增 weak post ID 列表和详情各列表数量，便于定位漏作品
+
 v1.3.15
 修复「下载所有作品」仍然漏图文作品
 修复 weak post 对账接口参数不合法（游标字段应为 cursor 而不是 max_cursor），现在能拿到主页完整作品 ID

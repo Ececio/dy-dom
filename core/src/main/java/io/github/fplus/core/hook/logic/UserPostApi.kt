@@ -106,6 +106,9 @@ object UserPostApi {
     private val WEAK_CLASS = "com.ss.android.ugc.aweme.profile.tab.api.PostAwemeRepo\$TabApi"
     private const val WEAK_METHOD = "fetchWeakPostList"
 
+    /** 主页作品列表真正的入口：`PostAwemeRepo.LIZ(参数对象, itemListId, JsonObject)` */
+    private const val WEAK_REPO_CLASS = "com.ss.android.ugc.aweme.profile.tab.api.PostAwemeRepo"
+
     /** 按 ID 取完整作品的接口，都是 `/aweme/v1/multi/aweme/detail/` */
     private val DETAIL_SPECS = listOf(
         "com.ss.android.ugc.aweme.sticker.flash.detail.FlashMobDetailApi" to "getAwemeByIds",
@@ -247,6 +250,7 @@ object UserPostApi {
         // 跟主页实际在用的 weak post 列表对账，补回被某个接口过滤掉的作品（实测图文会被过滤）
         val weakIds = fetchWeakPostIds(secUid, uid, count)
         if (weakIds.isNotEmpty()) {
+            BatchDebug.log("weak post ID: " + weakIds.joinToString(", ") { it.takeLast(8) })
             val missing = weakIds.filter { it !in collected }
             BatchDebug.log("weak post 对账: 列表=${weakIds.size}, 已拿到=${collected.size}, 缺少=${missing.size}")
             if (missing.isNotEmpty()) {
@@ -437,11 +441,7 @@ object UserPostApi {
      */
     private fun wrapContinuation(type: Class<*>, target: Continuation<*>): Any {
         val loader = type.classLoader ?: target.javaClass.classLoader
-        val emptyContext = runCatching {
-            Class.forName("kotlin.coroutines.EmptyCoroutineContext", false, loader)
-                .getField("INSTANCE")
-                .get(null)
-        }.getOrNull()
+        val emptyContext = emptyCoroutineContext(loader)
 
         return java.lang.reflect.Proxy.newProxyInstance(loader, arrayOf(type)) { proxy, method, args ->
             when (method.name) {
@@ -461,6 +461,36 @@ object UserPostApi {
                 "toString" -> "FreedomPlusContinuation"
                 "hashCode" -> System.identityHashCode(target)
                 "equals" -> proxy === args?.firstOrNull()
+                else -> null
+            }
+        }
+    }
+
+    /**
+     * 宿主版 `EmptyCoroutineContext`。抖音的 kotlin-stdlib 被 R8 处理过，这个类可能已经被改名/裁掉，
+     * 取不到时用动态代理造一个合法的空 context（`get` 返回 null、`fold` 返回 initial）。
+     */
+    private fun emptyCoroutineContext(loader: ClassLoader?): Any? {
+        runCatching {
+            val cls = Class.forName("kotlin.coroutines.EmptyCoroutineContext", false, loader)
+            cls.getField("INSTANCE").get(null)?.let { return it }
+        }
+
+        val contextType = runCatching {
+            Class.forName("kotlin.coroutines.CoroutineContext", false, loader)
+        }.getOrNull() ?: return null
+
+        return java.lang.reflect.Proxy.newProxyInstance(
+            loader ?: contextType.classLoader,
+            arrayOf(contextType),
+        ) { proxy, method, args ->
+            when (method.name) {
+                "get" -> null
+                "minusKey", "plus" -> proxy
+                "fold" -> args?.firstOrNull()
+                "hashCode" -> System.identityHashCode(proxy)
+                "equals" -> proxy === args?.firstOrNull()
+                "toString" -> "FreedomPlusEmptyContext"
                 else -> null
             }
         }
@@ -798,9 +828,23 @@ object UserPostApi {
      * 31.5.0 主页列表走的是 `/aweme/v1/aweme/weak/post/`，它包含作者的全部作品（含图文），
      * 只是字段很少（只有 awemeId/desc/点赞/播放）。用它来跟作品列表接口对账，
      * 能发现被某个接口过滤掉的作品。
+     *
+     * 这里优先直接调用 App 自己的 `PostAwemeRepo.LIZ`：参数实体由 App 构造，`publish_video_strategy_type`、
+     * `show_live_replay_strategy`、`is_order_flow`、`post_serial_strategy`、`item_list_id` 这些值
+     * 都是 App 运行时算出来的，自己拼很容易漏一个就换来 `status=5 参数不合法`。
      */
     private suspend fun fetchWeakPostIds(secUid: String?, uid: String?, count: Int): List<String> =
         withContext(Dispatchers.IO) {
+            // 首选：完全走 App 的参数构造 + App 自己的 TabApi
+            val viaRepo = runCatching { weakIdsViaRepo(secUid, uid, count) }
+                .onFailure {
+                    val cause = it.cause ?: it
+                    BatchDebug.log("weak post(App) 失败: ${cause.javaClass.simpleName}: ${cause.message}")
+                }
+                .getOrDefault(emptyList())
+            if (viaRepo.isNotEmpty()) return@withContext viaRepo
+
+            // 兜底：自己拼参数（参数名按反编译结果写，字段名是 cursor 不是 max_cursor）
             runCatching {
                 val loader = hostClassLoader()
                 val factory = retrofitFactory(loader) ?: return@runCatching emptyList<String>()
@@ -817,7 +861,7 @@ object UserPostApi {
                 val raw = method.invoke(api, params) ?: return@runCatching emptyList()
                 val list = awaitResultBlocking(raw) ?: return@runCatching emptyList()
                 val weak = readValue(list, "weakPostAwemeList", "getWeakPostAwemeList") as? List<*>
-                BatchDebug.log("weak post: ${describe(list)}, weakCount=${weak?.size}")
+                BatchDebug.log("weak post(手工): ${describe(list)}, weakCount=${weak?.size}")
                 weak.orEmpty()
                     .mapNotNull { item -> item?.let { readValue(it, "awemeId", "getAwemeId")?.toString() } }
                     .filter { it.isNotBlank() }
@@ -826,6 +870,65 @@ object UserPostApi {
                 BatchDebug.log("weak post 探测失败: ${cause.javaClass.simpleName}: ${cause.message}")
             }.getOrDefault(emptyList())
         }
+
+    /**
+     * 直接调用 App 的 `PostAwemeRepo.LIZ(参数实体, itemListId, collectionItemListId)`。
+     *
+     * 参数类的混淆名（`X/0zDU`）每个版本都会变，所以从方法签名里反推，
+     * 再用它的 6 参构造 `(int tabType, String userId, String secUid, long cursor, int count, FeedItemList)` 造实例：
+     * `tabType=0` 是「作品」页（App 里只有这个值才会带 `post_serial_strategy`）。
+     */
+    private fun weakIdsViaRepo(secUid: String?, uid: String?, count: Int): List<String> {
+        val loader = hostClassLoader() ?: return emptyList()
+        val repoClass = loadClass(WEAK_REPO_CLASS, loader) ?: return emptyList()
+
+        // 3 个参数、第 2 个是 String、第 3 个是 Gson 的 JsonObject —— 唯一匹配 weak post
+        val build = repoClass.declaredMethods.firstOrNull { method ->
+            method.parameterTypes.size == 3 &&
+                    method.parameterTypes[1] == String::class.java &&
+                    method.parameterTypes[2].name.endsWith("JsonObject")
+        } ?: return emptyList()
+
+        val paramClass = build.parameterTypes[0]
+        val ctor = paramClass.declaredConstructors.firstOrNull { candidate ->
+            val types = candidate.parameterTypes
+            types.size == 6 &&
+                    types[0] == Int::class.javaPrimitiveType &&
+                    types[1] == String::class.java &&
+                    types[2] == String::class.java &&
+                    types[3] == Long::class.javaPrimitiveType &&
+                    types[4] == Int::class.javaPrimitiveType
+        } ?: run {
+            BatchDebug.log("weak post(App): ${paramClass.name} 没有 6 参构造")
+            return emptyList()
+        }
+
+        ctor.isAccessible = true
+        val param = ctor.newInstance(0, uid.orEmpty(), secUid.orEmpty(), 0L, count, null)
+
+        val jsonClass = loadClass("com.google.gson.JsonObject", loader)
+        val collectionItemListId = jsonClass?.getDeclaredConstructor()?.let {
+            it.isAccessible = true
+            it.newInstance()
+        }
+
+        val repo = repoClass.getDeclaredConstructor().apply { isAccessible = true }.newInstance()
+        build.isAccessible = true
+        val observable = build.invoke(repo, param, "", collectionItemListId) ?: return emptyList()
+        val result = awaitResultBlocking(observable) ?: return emptyList()
+
+        val weak = readValue(result, "weakPostAwemeList", "getWeakPostAwemeList") as? List<*>
+        val collection = readValue(result, "collectionWeakPostAwemeList", "getCollectionWeakPostAwemeList") as? List<*>
+        BatchDebug.log(
+            "weak post(App): status=${readValue(result, "statusCode", "getStatusCode")} " +
+                    "msg=${readValue(result, "statusMsg", "getStatusMsg")} " +
+                    "weak=${weak?.size} collection=${collection?.size}"
+        )
+        return (weak.orEmpty() + collection.orEmpty()).mapNotNull { item ->
+            item ?: return@mapNotNull null
+            readValue(item, "awemeId", "getAwemeId")?.toString()?.takeIf { it.isNotBlank() }
+        }
+    }
 
     /**
      * 按作品 ID 批量取完整 Aweme（`/aweme/v1/multi/aweme/detail/`）。
@@ -856,10 +959,8 @@ object UserPostApi {
                         )
                         val args = buildTypedArgs(method, values, null)
                         val raw = method.invoke(api, *args) ?: continue
-                        val detail = awaitResultBlocking(raw)
-                        (readValue(detail ?: continue, "items", "getItems") as? List<*>)
-                            ?.filterIsInstance<Aweme>()
-                            .orEmpty()
+                        val detail = awaitResultBlocking(raw) ?: continue
+                        readDetailAwemes(detail, ids)
                     } catch (e: Throwable) {
                         val cause = e.cause ?: e
                         BatchDebug.log("按 ID 取详情失败($className): ${cause.javaClass.simpleName}: ${cause.message}")
@@ -875,6 +976,48 @@ object UserPostApi {
                 BatchDebug.log("按 ID 取详情异常: ${cause.javaClass.simpleName}: ${cause.message}")
             }.getOrDefault(emptyList())
         }
+    }
+
+    /**
+     * 解析 `/aweme/v1/multi/aweme/detail/` 的响应。
+     *
+     * `items` 是被正常返回的作品；`filterList` / `verificationFilterList` 里是被风控/需验证筛掉的作品，
+     * 有时候完整数据就在这两个列表里，所以一起收，同一个 aid 优先留带图片/视频的那份。
+     */
+    private fun readDetailAwemes(detail: Any, requested: List<String>): List<Aweme> {
+        val wanted = requested.toHashSet()
+        val byId = LinkedHashMap<String, Aweme>()
+
+        fun collect(list: List<*>?) {
+            list.orEmpty().filterIsInstance<Aweme>().forEach { aweme ->
+                val id = aweme.aid?.takeIf { it.isNotBlank() }
+                    ?: readValue(aweme, "awemeId", "getAwemeId")?.toString()?.takeIf { it.isNotBlank() }
+                    ?: return@forEach
+                val old = byId[id]
+                val hasMedia = aweme.images != null || aweme.video != null
+                if (old == null) {
+                    byId[id] = aweme
+                } else if (old.images == null && old.video == null && hasMedia) {
+                    byId[id] = aweme
+                }
+            }
+        }
+
+        val items = readValue(detail, "items", "getItems") as? List<*>
+        val filtered = readValue(detail, "filterList", "getFilterList") as? List<*>
+        val verification = readValue(detail, "verificationFilterList", "getVerificationFilterList") as? List<*>
+        collect(items)
+        collect(filtered)
+        collect(verification)
+
+        BatchDebug.log(
+            "detail 列表: items=${items?.size ?: 0}, filter=${filtered?.size ?: 0}, verify=${verification?.size ?: 0}"
+        )
+
+        if (wanted.isEmpty()) return byId.values.toList()
+        val ordered = wanted.mapNotNull { byId[it] }
+        // 服务端可能用别的 id 命中，别丢
+        return ordered + byId.values.filter { (it.aid.orEmpty()) !in wanted }
     }
 
     private fun awaitResultBlocking(result: Any): Any? {
