@@ -970,12 +970,11 @@ object UserPostApi {
         }
 
         ctor.isAccessible = true
-        val param = if (ctor8 != null) {
-            ctor8.newInstance(0, uid.orEmpty(), secUid.orEmpty(), 0L, count, null, null, false)
+        fun buildParam(pageSize: Int): Any = if (ctor8 != null) {
+            ctor8.newInstance(0, uid.orEmpty(), secUid.orEmpty(), 0L, pageSize, null, null, false)
         } else {
             // 6 参构造里 cursor/count 会被丢弃，实际永远是 0/20
-            BatchDebug.log("weak post(App): 只有 6 参构造，count 固定 20")
-            ctor6!!.newInstance(0, uid.orEmpty(), secUid.orEmpty(), 0L, count, null)
+            ctor6!!.newInstance(0, uid.orEmpty(), secUid.orEmpty(), 0L, pageSize, null)
         }
 
         val jsonClass = loadClass("com.google.gson.JsonObject", loader)
@@ -987,27 +986,39 @@ object UserPostApi {
         val itemListId = jsonIdArray(knownIds)
         val repo = repoClass.getDeclaredConstructor().apply { isAccessible = true }.newInstance()
         build.isAccessible = true
-        BatchDebug.log(
-            "weak post(App) 请求: ctor=${if (ctor8 != null) 8 else 6} count=$count " +
-                    "item_list_id=${itemListId.take(120)}"
-        )
-        val observable = build.invoke(repo, param, itemListId, collectionItemListId) ?: return emptyList()
-        val result = awaitResultBlocking(observable) ?: return emptyList()
 
-        val weak = readValue(result, "weakPostAwemeList", "getWeakPostAwemeList") as? List<*>
-        val collection = readValue(result, "collectionWeakPostAwemeList", "getCollectionWeakPostAwemeList") as? List<*>
-        BatchDebug.log(
-            "weak post(App): status=${readValue(result, "statusCode", "getStatusCode")} " +
-                    "msg=${readValue(result, "statusMsg", "getStatusMsg")} " +
-                    "weak=${weak?.size} collection=${collection?.size}"
-        )
-        if (weak.isNullOrEmpty() && collection.isNullOrEmpty()) {
-            BatchDebug.log("weak post(App) raw=${jsonOf(result)}")
+        fun attempt(pageSize: Int): List<String> {
+            BatchDebug.log(
+                "weak post(App) 请求: ctor=${if (ctor8 != null) 8 else 6} count=$pageSize " +
+                        "item_list_id=${itemListId.take(120)}"
+            )
+            val observable = build.invoke(repo, buildParam(pageSize), itemListId, collectionItemListId)
+                ?: return emptyList()
+            val result = awaitResultBlocking(observable) ?: return emptyList()
+
+            val weak = readValue(result, "weakPostAwemeList", "getWeakPostAwemeList") as? List<*>
+            val collection = readValue(result, "collectionWeakPostAwemeList", "getCollectionWeakPostAwemeList") as? List<*>
+            BatchDebug.log(
+                "weak post(App): status=${readValue(result, "statusCode", "getStatusCode")} " +
+                        "msg=${readValue(result, "statusMsg", "getStatusMsg")} " +
+                        "weak=${weak?.size} collection=${collection?.size}"
+            )
+            if (weak.isNullOrEmpty() && collection.isNullOrEmpty()) {
+                BatchDebug.log("weak post(App) raw=${jsonOf(result)}")
+            }
+            return (weak.orEmpty() + collection.orEmpty()).mapNotNull { item ->
+                item ?: return@mapNotNull null
+                readValue(item, "awemeId", "getAwemeId")?.toString()?.takeIf { it.isNotBlank() }
+            }
         }
-        return (weak.orEmpty() + collection.orEmpty()).mapNotNull { item ->
-            item ?: return@mapNotNull null
-            readValue(item, "awemeId", "getAwemeId")?.toString()?.takeIf { it.isNotBlank() }
+
+        val ids = attempt(count)
+        // count 传大了有可能被判「参数不合法」，退回 App 固定用的 20 再试一次
+        if (ids.isEmpty() && count > 20) {
+            BatchDebug.log("weak post(App): count=$count 没拿到数据，改用 20 重试")
+            return attempt(20)
         }
+        return ids
     }
 
     /**
@@ -1108,6 +1119,7 @@ object UserPostApi {
         BatchDebug.log(
             "detail 列表: items=${items?.size ?: 0}, filter=${filtered?.size ?: 0}, verify=${verification?.size ?: 0}"
         )
+        if (byId.isEmpty()) BatchDebug.log("detail raw=${jsonOf(detail)}")
 
         if (wanted.isEmpty()) return byId.values.toList()
         val ordered = wanted.mapNotNull { byId[it] }
