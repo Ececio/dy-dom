@@ -76,8 +76,9 @@ class DownloadAllUserWorksLogic(
         val content = buildString {
             append("作者: ").append(nickname.ifBlank { shortId })
             if (shortId.isNotBlank()) append(" (").append(shortId).append(")")
-            append("\n作品数: ").append(if (awemeCount > 0) awemeCount else "未知")
-            append("\n保存目录: ").append(ConfigV1.getFreedomDir(context).path)
+            append("\n作品数: ").append(if (awemeCount > 0) awemeCount else "未知（开始后自动统计）")
+            append("\n视频保存到: ").append(videoDir.path)
+            append("\n图片保存到: ").append(imageDir.path)
             append("\n\n视频保存为 mp4，图文按图片逐张保存；文件名与单个作品下载一致。")
             if (config.isWebDav) append("\n本功能不会自动上传 WebDav。")
         }
@@ -93,7 +94,20 @@ class DownloadAllUserWorksLogic(
 
     private fun startDownload() {
         if (!UserPostApi.isAvailable()) {
-            hook.showToast(context, "当前抖音版本未找到作品列表接口，暂时无法使用")
+            val reason = UserPostApi.lastError()
+            hook.showMessageDialog(
+                context = context,
+                title = NOTIFY_TITLE,
+                content = buildString {
+                    append("当前抖音版本未找到作品列表接口，暂时无法使用。")
+                    if (!reason.isNullOrBlank()) {
+                        append("\n\n原因: ").append(reason)
+                    }
+                    append("\n\n可把这段提示反馈给开发者，便于适配新版本。")
+                },
+                singleButton = true,
+                confirm = "知道了",
+            )
             return
         }
 
