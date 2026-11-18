@@ -13,6 +13,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.lang.reflect.Modifier
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -35,6 +36,101 @@ private var pcasCache: JSONArray? = null
 
 fun Aweme.createDate(): String {
     return Date(this.createTime * 1000).format()
+}
+
+/**
+ * 获取当前视频作者的全部字段。
+ *
+ * 使用运行时反射遍历真实的 User 类（不止 compileOnly 桩类里声明的字段），
+ * 空值、空字符串和默认 Object.toString() 会被跳过。
+ */
+fun Aweme.authorInfoText(): String {
+    val user = author ?: return "未知"
+    val lines = mutableListOf<String>()
+    val seen = mutableSetOf<String>()
+
+    var type: Class<*>? = user.javaClass
+    while (type != null && type != Any::class.java) {
+        val current = type
+        val fields = runCatching { current.declaredFields }.getOrNull()
+        if (fields != null) {
+            for (field in fields) {
+                if (field.isSynthetic || Modifier.isStatic(field.modifiers)) continue
+                if (!seen.add(field.name)) continue
+
+                val value = runCatching {
+                    field.isAccessible = true
+                    field.get(user)
+                }.getOrNull() ?: continue
+
+                val text = value.toInfoText() ?: continue
+                lines += "${field.name}: $text"
+            }
+        }
+        type = current.superclass
+    }
+
+    return lines.joinToString("\n").ifBlank { "未知" }
+}
+
+private fun Any?.toInfoText(): String? {
+    if (this == null) return null
+    return when (this) {
+        is CharSequence -> toString().trim().takeIf { it.isNotEmpty() }
+        is Number, is Boolean -> toString()
+        is Enum<*> -> name
+        is Collection<*> -> asSequence()
+            .mapNotNull { it.toInfoText() }
+            .take(8)
+            .joinToString(", ")
+            .takeIf { it.isNotBlank() }
+
+        is Map<*, *> -> entries.asSequence()
+            .mapNotNull { entry -> entry.value?.toInfoText()?.let { text -> "${entry.key}=$text" } }
+            .take(8)
+            .joinToString(", ")
+            .takeIf { it.isNotBlank() }
+
+        is Array<*> -> asSequence()
+            .mapNotNull { it?.toInfoText() }
+            .take(8)
+            .joinToString(", ")
+            .takeIf { it.isNotBlank() }
+
+        else -> {
+            if (javaClass.isArray) {
+                (0 until minOf(java.lang.reflect.Array.getLength(this), 8))
+                    .mapNotNull { index -> java.lang.reflect.Array.get(this, index)?.toInfoText() }
+                    .joinToString(", ")
+                    .takeIf { it.isNotBlank() }
+            } else {
+                extractNestedInfo()
+            }
+        }
+    }
+}
+
+private val DEFAULT_TO_STRING = Regex("^[\\w.$]+@[0-9a-fA-F]{1,16}$")
+
+private fun Any.extractNestedInfo(): String? {
+    val urlList = runCatching {
+        javaClass.getDeclaredField("urlList").apply { isAccessible = true }.get(this)
+    }.getOrNull()
+
+    if (urlList is Collection<*>) {
+        urlList.firstOrNull()?.toString()?.takeIf { it.isNotBlank() }?.let { return it }
+    }
+
+    for (name in listOf("url", "uri")) {
+        val text = runCatching {
+            javaClass.getDeclaredField(name).apply { isAccessible = true }.get(this)?.toString()
+        }.getOrNull()
+        if (!text.isNullOrBlank()) return text
+    }
+
+    val text = toString()
+    if (DEFAULT_TO_STRING.matches(text)) return null
+    return text.take(300)
 }
 
 /**

@@ -25,6 +25,7 @@ import io.github.fplus.core.base.BaseHook
 import io.github.fplus.core.config.ConfigV1
 import io.github.fplus.core.helper.DexkitBuilder
 import io.github.fplus.core.hook.logic.DownloadLogic
+import io.github.fplus.core.hook.logic.authorInfoText
 import io.github.fplus.core.hook.logic.videoInfoText
 import io.github.fplus.core.ui.activity.FreedomSettingActivity
 import io.github.xpler.core.XplerLog
@@ -164,6 +165,8 @@ class HLongPressLayout : BaseHook() {
             items.add("下载")
         }
 
+        items.add("获取作者信息")
+
         if (config.isNeatMode) {
             items.add(0, if (!config.neatModeState) "清爽模式" else "普通模式")
         }
@@ -206,6 +209,19 @@ class HLongPressLayout : BaseHook() {
                     context = view.context,
                     aweme = aweme,
                 )
+            }
+
+            "获取作者信息" -> {
+                singleLaunchMain("$item") {
+                    val msg = aweme?.authorInfoText() ?: "未知"
+                    showMessageDialog(
+                        context = view.context,
+                        title = "作者信息",
+                        content = msg,
+                        copyText = msg,
+                        singleButton = true,
+                    )
+                }
             }
 
             "视频信息" -> {

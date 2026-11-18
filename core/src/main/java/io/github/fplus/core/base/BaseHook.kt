@@ -19,6 +19,7 @@ import android.widget.TextView
 import androidx.annotation.DrawableRes
 import androidx.appcompat.content.res.AppCompatResources
 import androidx.compose.runtime.Composable
+import androidx.core.view.doOnLayout
 import androidx.core.view.isVisible
 import com.freegang.extension.isDarkMode
 import com.freegang.ktutils.app.IProgressNotification
@@ -224,6 +225,13 @@ abstract class BaseHook : HookEntity() {
         binding.messageDialogTitle.setTextColor(getTextColor(isDarkMode))
         binding.messageDialogContent.text = content
         binding.messageDialogContent.setTextColor(getTextColor(isDarkMode))
+        // 字段很多时（如作者信息）限制弹窗内容高度，超出部分可滚动
+        binding.messageDialogScroll.doOnLayout { scroll ->
+            val maxHeight = (context.resources.displayMetrics.heightPixels * 0.62f).toInt()
+            if (scroll.height > maxHeight) {
+                scroll.layoutParams = scroll.layoutParams.apply { height = maxHeight }
+            }
+        }
         binding.messageDialogCancel.text = cancel
         binding.messageDialogCancel.setTextColor(getTextColor(isDarkMode))
         binding.messageDialogConfirm.text = confirm
