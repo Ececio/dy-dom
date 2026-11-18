@@ -20,65 +20,127 @@ data class UserPostPage(
 /**
  * 用户作品列表接口（`/aweme/v1/aweme/post/`）。
  *
- * 为什么要绕这么一圈：
- * 抖音的作品列表接口必须带 App 内的签名（X-Gorgon / X-Bogus），裸 HTTP 请求只会返回空列表。
- * 所以这里不自己拼请求，而是复用抖音自己的 Retrofit 栈：
+ * 为什么不能自己拼 HTTP：作品列表必须带 App 内签名（X-Gorgon / X-Bogus），裸请求只会拿到空列表。
+ * 所以这里复用抖音自己的 Retrofit 栈：
  *
  *  `RetrofitFactory.createIRetrofitFactorybyMonsterPlugin(false)` -> `create(host)` -> `create(接口)`
  *
- * 这样公共参数、签名、Cookie 都由抖音的拦截器自动补全，和 App 打开别人主页时的请求完全一致。
+ * 这样公共参数、签名、Cookie 全部由 App 拦截器补全。
  *
- * 接口本身按类名候选 + `@GET("/aweme/v1/aweme/post/")` 注解识别，抖音改包名时只需往候选里加一行。
+ * 31.5.0 里 `PostAwemeRepo$TabApi.fetchPublicList` 已经基本没人调用（页面列表已改成
+ * `/aweme/v1/aweme/weak/post/`），直接调它容易拿到空列表。所以这里准备了多个“App 自己在用”的
+ * 接口按顺序尝试，谁先返回作品就用谁：
+ *
+ *  1. `IFeedLiveShareProfileApi#getPublishAwemeList`：精确参数 `user_id/max_cursor/count`，返回 Single
+ *  2. `CommonNetApi#getFeedItemList`：`count/user_id/sec_user_id/source/page_scene/...`，返回 Observable
+ *  3. `PostAwemeRepo$TabApi#fetchPublicListInCoroutine`：`@QueryMap` 版本（suspend）
+ *  4. `PostAwemeRepo$TabApi#fetchPublicList`：`@MaxLength int + @QueryMap`
+ *  5. 都失败时再探测 weak post，把结果写进日志，便于下一版适配
  */
 object UserPostApi {
     private const val TAG = "UserPostApi"
-    private const val POST_PATH = "/aweme/v1/aweme/post/"
 
-    /**
-     * 已知携带作品列表接口的接口类 / 外部类，按优先级排列。
-     * 31.5.0：`PostAwemeRepo$TabApi`；备用：`IFeedLiveShareProfileApi`。
-     */
-    private val CANDIDATE_APIS = listOf(
-        "com.ss.android.ugc.aweme.profile.tab.api.PostAwemeRepo\$TabApi",
-        "com.ss.android.ugc.aweme.feedliveshare.screen.api.IFeedLiveShareProfileApi",
+    /** 一个候选接口：类名 + 方法名 + 参数取值规则 */
+    private class Spec(
+        val label: String,
+        val className: String,
+        val methodName: String,
+        /** 是否支持翻页（有 cursor 参数）；不支持时只用于第一页 */
+        val paging: Boolean,
+        val values: (secUid: String?, uid: String?, cursor: Long, count: Int) -> Map<String, Any?>,
     )
 
-    /** 只知道外部类时，从 `declaredClasses` 里找带作品接口的内部接口 */
-    private val CANDIDATE_OUTER = listOf(
-        "com.ss.android.ugc.aweme.profile.tab.api.PostAwemeRepo",
+    private val SPECS = listOf(
+        // 精确参数版本，最可靠：返回 Single<FeedItemList>
+        Spec(
+            label = "liveShare.getPublishAwemeList",
+            className = "com.ss.android.ugc.aweme.feedliveshare.screen.api.IFeedLiveShareProfileApi",
+            methodName = "getPublishAwemeList",
+            paging = true,
+        ) { secUid, uid, cursor, count ->
+            linkedMapOf(
+                "user_id" to uid.orEmpty(),
+                "max_cursor" to cursor,
+                "count" to count,
+                "together_room_id" to null,
+                "room_provider" to 0,
+            )
+        },
+
+        // IM 里展示用户作品用的接口，同样是 /aweme/v1/aweme/post/
+        Spec(
+            label = "im.getFeedItemList",
+            className = "com.ss.android.ugc.aweme.im.compatible.CommonNetApi",
+            methodName = "getFeedItemList",
+            paging = false,
+        ) { secUid, uid, cursor, count ->
+            linkedMapOf(
+                "count" to count,
+                "user_id" to uid.orEmpty(),
+                "sec_user_id" to secUid.orEmpty(),
+                "source" to 0,
+                "page_scene" to 0,
+                "publish_video_strategy_type" to 0,
+            )
+        },
+
+        // 主页 Tab 的老接口，保留兜底
+        Spec(
+            label = "tab.fetchPublicListInCoroutine",
+            className = "com.ss.android.ugc.aweme.profile.tab.api.PostAwemeRepo\$TabApi",
+            methodName = "fetchPublicListInCoroutine",
+            paging = true,
+        ) { secUid, uid, cursor, count -> postParams(secUid, uid, cursor, count) },
+
+        Spec(
+            label = "tab.fetchPublicList",
+            className = "com.ss.android.ugc.aweme.profile.tab.api.PostAwemeRepo\$TabApi",
+            methodName = "fetchPublicList",
+            paging = true,
+        ) { secUid, uid, cursor, count -> postParams(secUid, uid, cursor, count) },
     )
+
+    private val WEAK_CLASS = "com.ss.android.ugc.aweme.profile.tab.api.PostAwemeRepo\$TabApi"
+    private const val WEAK_METHOD = "fetchWeakPostList"
 
     /** 拿不到 App 真实域名时的兜底，按顺序尝试 */
     private val FALLBACK_HOSTS = listOf(
         "https://aweme.snssdk.com",
         "https://api.amemv.com",
         "https://api3-normal-c-lf.amemv.com",
-        "https://api16-normal-c-useast1a.tiktokv.com",
     )
 
+    private class Endpoint(
+        val spec: Spec,
+        val api: Any,
+        val method: Method,
+        val host: String,
+    ) {
+        val label: String get() = "${spec.label}@${host.removePrefix("https://")}"
+    }
+
     @Volatile
-    private var endpoint: Endpoint? = null
+    private var endpoints: List<Endpoint>? = null
 
     @Volatile
     private var lastError: String? = null
 
-    private data class Endpoint(val api: Any, val method: Method)
+    /** 上一次成功的接口，下次优先用，避免每页都重新试错 */
+    @Volatile
+    private var preferred: Endpoint? = null
 
     /** 最近一次解析失败的原因，用于弹窗提示 */
     fun lastError(): String? = lastError
 
-    /**
-     * 接口是否可用（只在成功时缓存，失败下次长按会重试）
-     */
-    fun isAvailable(): Boolean = resolveEndpoint() != null
+    fun isAvailable(): Boolean = resolveEndpoints().isNotEmpty()
 
     /**
      * 拉取一页作品
      *
-     * @param secUid   作者 sec_uid，优先使用
-     * @param uid      作者 uid，sec_uid 为空时使用
-     * @param cursor   游标，第一页传 0
-     * @param count    每页数量
+     * @param secUid 作者 sec_uid
+     * @param uid    作者 uid（数字 ID，部分接口只认这个）
+     * @param cursor 游标，第一页传 0
+     * @param count  每页数量
      */
     suspend fun fetchPage(
         secUid: String?,
@@ -86,41 +148,77 @@ object UserPostApi {
         cursor: Long,
         count: Int,
     ): UserPostPage {
-        val endpoint = resolveEndpoint()
-            ?: return UserPostPage(
+        val all = resolveEndpoints()
+        if (all.isEmpty()) {
+            return UserPostPage(
                 emptyList(), false, 0L,
-                "未找到作品列表接口（当前抖音版本可能不兼容）" + lastError?.let { ": $it" }.orEmpty(),
+                "未找到作品列表接口" + lastError?.let { ": $it" }.orEmpty(),
             )
-
-        return try {
-            val result = invoke(endpoint, buildParams(secUid, uid, cursor, count), cursor, count)
-            parsePage(result)
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Throwable) {
-            XplerLog.e("$TAG 请求失败: ${e.javaClass.name}: ${e.message}")
-            XplerLog.e(e)
-            UserPostPage(emptyList(), false, 0L, "请求失败: ${e.javaClass.simpleName} ${e.message.orEmpty()}".trim())
         }
+
+        // 上次成功的接口优先，其余按顺序兜底
+        val ordered = ArrayList<Endpoint>(all.size)
+        val best = preferred
+        // 翻页时只能用带 cursor 的接口，否则会一直返回第一页
+        val usable = if (cursor == 0L) all else all.filter { it.spec.paging }
+        if (usable.isEmpty()) return UserPostPage(emptyList(), false, 0L, null)
+        if (best != null && usable.any { it === best }) ordered.add(best)
+        ordered.addAll(usable.filter { it !== best })
+
+        var lastPage: UserPostPage? = null
+        for (endpoint in ordered) {
+            val values = endpoint.spec.values(secUid, uid, cursor, count)
+            BatchDebug.log("[${endpoint.label}] cursor=$cursor count=$count params=$values")
+            val page = try {
+                val raw = invoke(endpoint, values, cursor, count)
+                BatchDebug.log("[${endpoint.label}] response=${describe(raw)}")
+                parsePage(raw)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                val cause = e.cause ?: e
+                BatchDebug.log("[${endpoint.label}] 调用失败: ${cause.javaClass.name}: ${cause.message}")
+                XplerLog.e("$TAG 调用失败(${endpoint.label}): ${cause.javaClass.name}: ${cause.message}")
+                lastPage = UserPostPage(
+                    emptyList(), false, 0L,
+                    "请求失败: ${cause.javaClass.simpleName} ${cause.message.orEmpty()}".trim(),
+                )
+                continue
+            }
+
+            if (page.awemes.isNotEmpty()) {
+                if (endpoint.spec.paging) preferred = endpoint
+                return page
+            }
+            // 第一页就空：继续换下一个接口；翻页后为空说明已到底，直接返回
+            BatchDebug.log("[${endpoint.label}] 作品为空${page.error?.let { " ($it)" }.orEmpty()}")
+            if (lastPage == null || lastPage.error == null) lastPage = page
+            if (cursor != 0L) return page
+        }
+
+        // 全部接口都空 -> 探测 weak post，把真实情况写进日志
+        if (cursor == 0L) probeWeakPost(secUid, uid, count)
+
+        return lastPage ?: UserPostPage(emptyList(), false, 0L, "接口返回为空")
     }
 
-    private fun buildParams(
+    /** 主页老接口的参数，按 App 里 `PostAwemeRepo` 的写法拼 */
+    private fun postParams(
         secUid: String?,
         uid: String?,
         cursor: Long,
         count: Int,
-    ): Map<String, String> {
-        val params = LinkedHashMap<String, String>()
-        // 不同版本的接口用不同的游标字段，两个都带上，值一致不会有副作用
-        params["cursor"] = cursor.toString()
+    ): Map<String, Any?> {
+        val params = linkedMapOf<String, Any?>()
         params["max_cursor"] = cursor.toString()
-        if (!secUid.isNullOrBlank()) {
-            params["sec_user_id"] = secUid
-        } else if (!uid.isNullOrBlank()) {
-            params["user_id"] = uid
-        }
+        if (!secUid.isNullOrBlank()) params["sec_user_id"] = secUid else if (!uid.isNullOrBlank()) params["user_id"] = uid
         params["count"] = count.toString()
+        params["publish_video_strategy_type"] = "0"
         params["source"] = "0"
+        params["user_avatar_shrink"] = ""
+        params["video_cover_shrink"] = ""
+        params["show_live_replay_strategy"] = "0"
+        params["is_order_flow"] = "0"
         params["page_from"] = "2"
         params["location_permission"] = "0"
         params["familiar_collects"] = "0"
@@ -131,38 +229,58 @@ object UserPostApi {
 
     private suspend fun invoke(
         endpoint: Endpoint,
-        params: Map<String, String>,
+        values: Map<String, Any?>,
         cursor: Long,
         count: Int,
     ): Any? {
         val method = endpoint.method
         method.isAccessible = true
+        val hasMap = method.parameterTypes.any { Map::class.java.isAssignableFrom(it) }
+        val stringMap = toStringMap(values)
 
         if (isSuspendMethod(method)) {
             return suspendCancellableCoroutine { continuation ->
                 try {
-                    method.invoke(
-                        endpoint.api,
-                        *buildArgs(method, params, cursor, count, continuation),
-                    )
+                    val args = if (hasMap) {
+                        buildMapArgs(method, stringMap, cursor, count, continuation)
+                    } else {
+                        buildTypedArgs(method, values, continuation)
+                    }
+                    method.invoke(endpoint.api, *args)
                 } catch (e: Throwable) {
-                    continuation.resumeWith(Result.failure(e))
+                    continuation.resumeWith(Result.failure(e.cause ?: e))
                 }
             }
         }
 
         return withContext(Dispatchers.IO) {
-            val result = method.invoke(
-                endpoint.api,
-                *buildArgs(method, params, cursor, count, null),
-            ) ?: return@withContext null
-
+            val args = if (hasMap) {
+                buildMapArgs(method, stringMap, cursor, count, null)
+            } else {
+                buildTypedArgs(method, values, null)
+            }
+            val result = method.invoke(endpoint.api, *args) ?: return@withContext null
             awaitResult(result)
         }
     }
 
-    /** 按参数类型构造实参，兼容 `(Map)`、`(int, Map)`、`(Map, Continuation)` 等写法 */
-    private fun buildArgs(
+    /** 方法最后一个是 Continuation 参数即为 suspend 方法 */
+    private fun isSuspendMethod(method: Method): Boolean {
+        return method.parameterTypes.lastOrNull()
+            ?.let { Continuation::class.java.isAssignableFrom(it) } == true
+    }
+
+    private fun toStringMap(values: Map<String, Any?>): Map<String, String> {
+        val map = LinkedHashMap<String, String>()
+        values.forEach { (k, v) ->
+            if (v == null) return@forEach
+            map[k] = v.toString()
+        }
+        return map
+    }
+
+    /** `@QueryMap` 风格的接口，例如 `fetchPublicList(int, Map)` */
+    private fun buildMapArgs(
         method: Method,
         params: Map<String, String>,
         cursor: Long,
@@ -178,28 +296,68 @@ object UserPostApi {
                 type == Int::class.javaPrimitiveType || type == Integer::class.java -> count
                 type == Long::class.javaPrimitiveType || type == java.lang.Long::class.java -> cursor
                 type == Boolean::class.javaPrimitiveType || type == java.lang.Boolean::class.java -> false
-                type == String::class.java -> queryValue(method, index, params)
+                type == String::class.java -> params["sec_user_id"] ?: params["user_id"].orEmpty()
                 else -> null
             }
         }
     }
 
-    /** 非 Map 参数（例如 `@Query("sec_user_id") String secUid`）按注解里的名字取值 */
-    private fun queryValue(method: Method, index: Int, params: Map<String, String>): String {
+    /** 精确参数风格的接口，参数名从 `@Query` / `@Field` 注解里取 */
+    private fun buildTypedArgs(
+        method: Method,
+        values: Map<String, Any?>,
+        continuation: Continuation<*>?,
+    ): Array<Any?> {
+        val types = method.parameterTypes
+        return Array(types.size) { index ->
+            val type = types[index]
+            if (Continuation::class.java.isAssignableFrom(type)) {
+                continuation
+            } else {
+                val name = paramName(method, index)
+                if (name != null && values.containsKey(name)) {
+                    coerce(values[name], type)
+                } else {
+                    defaultValue(type)
+                }
+            }
+        }
+    }
+
+    /** 读取 `@Query("x")` / `@Field("x")` 里的参数名 */
+    private fun paramName(method: Method, index: Int): String? {
         val annotations = method.parameterAnnotations.getOrNull(index).orEmpty()
         for (annotation in annotations) {
-            val name = annotation.annotationClass.java.name
-            if (!name.endsWith(".Query")) continue
+            val simpleName = annotation.annotationClass.java.simpleName
+            if (simpleName != "Query" && simpleName != "Field") continue
             val value = runCatching {
                 annotation.annotationClass.java.getMethod("value").invoke(annotation) as? String
             }.getOrNull()
-            if (!value.isNullOrBlank()) {
-                params[value]?.let { return it }
-                if (value == "sec_user_id") return params["sec_user_id"].orEmpty()
-                if (value == "user_id") return params["user_id"].orEmpty()
-            }
+            if (!value.isNullOrBlank()) return value
         }
-        return params["sec_user_id"] ?: params["user_id"].orEmpty()
+        return null
+    }
+
+    private fun coerce(value: Any?, type: Class<*>): Any? {
+        if (value == null) return if (type.isPrimitive) defaultValue(type) else null
+        return when {
+            type == String::class.java -> value.toString()
+            type == Int::class.javaPrimitiveType || type == Integer::class.java ->
+                (value as? Number)?.toInt() ?: value.toString().toIntOrNull() ?: 0
+            type == Long::class.javaPrimitiveType || type == java.lang.Long::class.java ->
+                (value as? Number)?.toLong() ?: value.toString().toLongOrNull() ?: 0L
+            type == Boolean::class.javaPrimitiveType || type == java.lang.Boolean::class.java ->
+                (value as? Boolean) ?: (value.toString() == "true")
+            else -> value
+        }
+    }
+
+    private fun defaultValue(type: Class<*>): Any? = when {
+        type == String::class.java -> ""
+        type == Int::class.javaPrimitiveType || type == Integer::class.java -> 0
+        type == Long::class.javaPrimitiveType || type == java.lang.Long::class.java -> 0L
+        type == Boolean::class.javaPrimitiveType || type == java.lang.Boolean::class.java -> false
+        else -> null
     }
 
     /** Deferred / Single / Observable / Call / 直接返回实体 */
@@ -262,6 +420,21 @@ object UserPostApi {
         return UserPostPage(awemes, hasMore, maxCursor)
     }
 
+    /** 只用于日志：把响应关键字段压成一行 */
+    private fun describe(raw: Any?): String {
+        if (raw == null) return "null"
+        val items = readValue(raw, "items", "getItems") as? List<*>
+        return buildString {
+            append("type=").append(raw.javaClass.simpleName)
+            append(" status=").append(readValue(raw, "status_code", "statusCode", "getStatusCode"))
+            append(" msg=").append(readValue(raw, "status_msg", "statusMsg", "getStatusMsg"))
+            append(" items=").append(items?.size)
+            append(" first=").append(items?.firstOrNull()?.javaClass?.simpleName)
+            append(" hasMore=").append(readValue(raw, "hasMore", "isHasMore"))
+            append(" maxCursor=").append(readValue(raw, "maxCursor", "getMaxCursor"))
+        }
+    }
+
     private fun readValue(target: Any, vararg names: String): Any? {
         var type: Class<*>? = target.javaClass
         while (type != null && type != Any::class.java) {
@@ -277,7 +450,6 @@ object UserPostApi {
             type = current.superclass
         }
 
-        // 反射字段读不到时再试 getter，例如 statusCode -> getStatusCode
         for (name in names) {
             val capitalized = name.replaceFirstChar { it.uppercaseChar() }
             val getters = listOf(name, "get$capitalized", "is$capitalized").distinct()
@@ -289,68 +461,111 @@ object UserPostApi {
         return null
     }
 
-    private fun resolveEndpoint(): Endpoint? {
-        endpoint?.let { return it }
+    private fun resolveEndpoints(): List<Endpoint> {
+        endpoints?.let { return it }
         synchronized(this) {
-            endpoint?.let { return it }
-            val built = runCatching { buildEndpoint() }
+            endpoints?.let { return it }
+            val built = runCatching { buildEndpoints() }
                 .onFailure {
                     lastError = "${it.javaClass.simpleName}: ${it.message.orEmpty()}"
-                    XplerLog.e("$TAG 解析失败: ${it.javaClass.name}: ${it.message}")
-                    XplerLog.e(it)
+                    BatchDebug.log("解析接口异常: ${it.javaClass.name}: ${it.message}")
+                    XplerLog.e("$TAG 解析异常: ${it.javaClass.name}: ${it.message}")
                 }
-                .getOrNull()
-            if (built != null) {
-                lastError = null
-                endpoint = built
-            }
-            return endpoint
+                .getOrDefault(emptyList())
+            if (built.isNotEmpty()) lastError = null else lastError = buildError ?: lastError
+            endpoints = built
+            return built
         }
     }
 
-    private fun buildEndpoint(): Endpoint? {
-        val loader = hostClassLoader()
-        val classes = apiClasses(loader)
-        if (classes.isEmpty()) {
-            lastError = "找不到作品接口类"
-            XplerLog.d("$TAG 找不到作品接口类")
-            return null
-        }
+    private var buildError: String? = null
 
-        val factory = retrofitFactory(loader) ?: run {
-            lastError = "找不到 IRetrofitFactory"
-            XplerLog.d("$TAG 找不到 IRetrofitFactory")
-            return null
+    private fun buildEndpoints(): List<Endpoint> {
+        buildError = null
+        val loader = hostClassLoader()
+        val factory = retrofitFactory(loader)
+        if (factory == null) {
+            buildError = "找不到 IRetrofitFactory"
+            BatchDebug.log(buildError!!)
+            return emptyList()
         }
 
         val hosts = hostCandidates(loader)
-        XplerLog.d("$TAG 候选域名: $hosts")
-        XplerLog.d("$TAG 候选接口: ${classes.map { it.name }}")
+        BatchDebug.log("候选域名: $hosts")
+
+        val result = ArrayList<Endpoint>()
+        val failures = ArrayList<String>()
 
         for (host in hosts) {
             val retrofit = runCatching { createRetrofit(factory, host) }
-                .onFailure { XplerLog.e("$TAG 创建 Retrofit 失败($host): ${it.message}") }
+                .onFailure { BatchDebug.log("创建 Retrofit 失败($host): ${it.message}") }
                 .getOrNull() ?: continue
 
-            for (clazz in classes) {
-                val method = selectMethod(clazz)
-                if (method == null) {
-                    XplerLog.d("$TAG ${clazz.name} 没有作品列表方法")
+            for (spec in SPECS) {
+                val clazz = loadClass(spec.className, loader)
+                if (clazz == null) {
+                    failures.add("${spec.className} 不存在")
                     continue
                 }
-
+                val method = clazz.declaredMethods.firstOrNull { it.name == spec.methodName }
+                if (method == null) {
+                    failures.add("${spec.className}#${spec.methodName} 不存在")
+                    continue
+                }
                 val api = runCatching { createService(retrofit, clazz) }
-                    .onFailure { XplerLog.e("$TAG 创建服务失败(${clazz.name}): ${it.javaClass.name}: ${it.message}") }
+                    .onFailure { BatchDebug.log("创建服务失败(${spec.label}): ${it.javaClass.name}: ${it.message}") }
                     .getOrNull() ?: continue
-
-                XplerLog.d("$TAG 使用接口: ${clazz.name}#${method.name}, host=$host")
-                return Endpoint(api, method)
+                result.add(Endpoint(spec, api, method, host))
             }
         }
 
-        lastError = "所有候选接口/域名均创建失败"
-        XplerLog.d("$TAG 未找到可用的作品列表接口")
-        return null
+        if (result.isEmpty()) {
+            buildError = failures.distinct().joinToString("; ").ifBlank { "所有候选接口/域名均创建失败" }
+            BatchDebug.log("接口全部不可用: $buildError")
+        } else {
+            BatchDebug.log("可用接口: " + result.joinToString { it.label })
+        }
+        return result
+    }
+
+    /** 探测 weak post：31.5.0 主页列表走的是它，日志里记录条数便于后续适配 */
+    private fun probeWeakPost(secUid: String?, uid: String?, count: Int) {
+        runCatching {
+            val loader = hostClassLoader()
+            val factory = retrofitFactory(loader) ?: return
+            val clazz = loadClass(WEAK_CLASS, loader) ?: return
+            val method = clazz.declaredMethods.firstOrNull { it.name == WEAK_METHOD } ?: return
+            val host = preferred?.host ?: hostCandidates(loader).firstOrNull() ?: return
+            val retrofit = createRetrofit(factory, host) ?: return
+            val api = createService(retrofit, clazz) ?: return
+
+            val params = toStringMap(postParams(secUid, uid, 0L, count))
+            method.isAccessible = true
+            val result = method.invoke(api, params) ?: return
+            val list = awaitResultBlocking(result)
+            val weak = readValue(list ?: return, "weakPostAwemeList", "getWeakPostAwemeList") as? List<*>
+            BatchDebug.log("weak post: ${describe(list)}, weakCount=${weak?.size}")
+            weak?.firstOrNull()?.let { first ->
+                val id = readValue(first, "awemeId", "getAwemeId")
+                BatchDebug.log("weak post firstId=$id")
+            }
+        }.onFailure {
+            BatchDebug.log("weak post 探测失败: ${it.javaClass.simpleName}: ${it.message}")
+        }
+    }
+
+    private fun awaitResultBlocking(result: Any): Any? {
+        if (implements(result.javaClass, "io.reactivex.Observable") ||
+            implements(result.javaClass, "io.reactivex.Flowable")
+        ) {
+            return runCatching { result.javaClass.getMethod("blockingFirst").invoke(result) }
+                .getOrElse { throw it.cause ?: it }
+        }
+        if (implements(result.javaClass, "io.reactivex.Single")) {
+            return runCatching { result.javaClass.getMethod("blockingGet").invoke(result) }
+                .getOrElse { throw it.cause ?: it }
+        }
+        return result
     }
 
     private fun hostClassLoader(): ClassLoader? {
@@ -362,76 +577,13 @@ object UserPostApi {
         return runCatching { Class.forName(name, false, loader) }.getOrNull()
     }
 
-    /** 接口类候选 + 外部类内部接口，按作品接口注解筛选 */
-    private fun apiClasses(loader: ClassLoader?): List<Class<*>> {
-        val result = LinkedHashSet<Class<*>>()
-
-        for (name in CANDIDATE_APIS) {
-            val clazz = loadClass(name, loader) ?: continue
-            if (clazz.isInterface) result.add(clazz)
-        }
-
-        for (name in CANDIDATE_OUTER) {
-            val outer = loadClass(name, loader) ?: continue
-            outer.declaredClasses
-                .filter { it.isInterface && selectMethod(it) != null }
-                .forEach { result.add(it) }
-        }
-
-        // 只在候选都失效时才回到注解扫描，成本较高
-        if (result.isEmpty()) {
-            for (name in CANDIDATE_OUTER) {
-                loadClass(name, loader)?.declaredClasses?.forEach { inner ->
-                    if (inner.isInterface && inner.declaredMethods.any { isPostMethod(it) }) result.add(inner)
-                }
-            }
-        }
-        return result.toList()
-    }
-
     /**
-     * 同一个接口类里可能同时有 `fetchPublicList(int, Map)`（返回 Deferred）和
-     * `fetchPublicListInCoroutine(Map, Continuation)`（suspend）两个方法，declaredMethods 顺序不保证。
-     * 优先选 suspend 版本，其次选只有一个 Map 参数的非 suspend 版本，最后选任意带 Map 的版本。
+     * 接口域名：`https://` + `AppContextManager.getApiHost().API_HOST_I_SNSSDK`，
+     * 和抖音创建 Retrofit 时用的是同一个值。
+     *
+     * 先读 `AppContextManager`，再读 `CommonConstants`：后者静态初始化会再取一遍 ApiHost，
+     * 万一初始化异常，类会进入 Error 状态，后续都取不到。
      */
-    private fun selectMethod(clazz: Class<*>): Method? {
-        val candidates = clazz.declaredMethods.filter { isPostMethod(it) }
-        if (candidates.isEmpty()) return null
-        return candidates.firstOrNull { method ->
-            isSuspendMethod(method) && method.parameterTypes.size == 2
-        } ?: candidates.firstOrNull { method ->
-            !isSuspendMethod(method) && method.parameterTypes.size == 1 &&
-                    Map::class.java.isAssignableFrom(method.parameterTypes[0])
-        } ?: candidates.firstOrNull { isSuspendMethod(it) }
-        ?: candidates.first()
-    }
-
-    private fun isSuspendMethod(method: Method): Boolean {
-        return method.parameterTypes.lastOrNull()
-            ?.let { Continuation::class.java.isAssignableFrom(it) } == true
-    }
-
-    /** 方法上是 `@GET("/aweme/v1/aweme/post/")` 且参数里有 Map（@QueryMap） */
-    private fun isPostMethod(method: Method): Boolean {
-        val path = method.annotations
-            .firstOrNull {
-                val name = it.annotationClass.java.name
-                name == "com.bytedance.retrofit2.http.GET" || name == "retrofit2.http.GET"
-            }
-            ?.let { annotation ->
-                runCatching {
-                    annotation.annotationClass.java.getMethod("value").invoke(annotation) as? String
-                }.getOrNull()
-            }
-            ?: return false
-
-        if (path.trimEnd('/') != POST_PATH.trimEnd('/')) return false
-        // @FormUrlEncoded 的 POST 不可能是这个接口
-        if (method.annotations.any { it.annotationClass.java.name.endsWith(".FormUrlEncoded") }) return false
-        return method.parameterTypes.any { Map::class.java.isAssignableFrom(it) }
-    }
-
-    /** 优先 App 真实域名，其次是历史兜底域名 */
     private fun hostCandidates(loader: ClassLoader?): List<String> {
         val hosts = LinkedHashSet<String>()
         appApiHost(loader)?.let { hosts.add(it) }
@@ -445,13 +597,6 @@ object UserPostApi {
         return rest.isNotBlank() && rest.contains('.') && !rest.contains(' ')
     }
 
-    /**
-     * 接口域名：`https://` + `AppContextManager.getApiHost().API_HOST_I_SNSSDK`，
-     * 和抖音创建 Retrofit 时用的是同一个值。
-     *
-     * 先读 `AppContextManager`，再读 `CommonConstants`：后者静态初始化会再取一遍 ApiHost，
-     * 万一初始化异常，类会进入 Error 状态，后续都取不到。
-     */
     private fun appApiHost(loader: ClassLoader?): String? {
         runCatching {
             val manager = loadClass("com.bytedance.ies.ugc.appcontext.AppContextManager", loader) ?: return@runCatching
@@ -466,21 +611,18 @@ object UserPostApi {
 
         val constants = loadClass("com.ss.android.constants.CommonConstants", loader)
         if (constants != null) {
-            // 优先已知字段
             for (name in arrayOf("API_URL_PREFIX_API", "LIZIZ", "LIZ")) {
                 val value = runCatching {
                     constants.getField(name).apply { isAccessible = true }.get(null) as? String
                 }.getOrNull()
                 if (isValidHost(value)) return value
             }
-            // 已知字段没命中时，退而求其次取任意一个合法域名
             constants.fields.forEach { field ->
                 if (field.type != String::class.java) return@forEach
                 val value = runCatching { field.isAccessible = true; field.get(null) as? String }.getOrNull()
                 if (isValidHost(value)) return value
             }
         }
-
         return null
     }
 
@@ -496,18 +638,13 @@ object UserPostApi {
                     .getMethod("createIRetrofitFactorybyMonsterPlugin", Boolean::class.javaPrimitiveType)
                     .invoke(null, false)
                     ?.let { return it }
-            }.onFailure { XplerLog.e("$TAG createIRetrofitFactorybyMonsterPlugin 失败: ${it.message}") }
+            }.onFailure { BatchDebug.log("createIRetrofitFactorybyMonsterPlugin 失败: ${it.message}") }
 
             runCatching {
                 factoryClass.getMethod("createNewServiceImplInstanceForSPI")
                     .invoke(null)
                     ?.let { return it }
-            }.onFailure { XplerLog.e("$TAG createNewServiceImplInstanceForSPI 失败: ${it.message}") }
-
-            runCatching {
-                factoryClass.getConstructor().newInstance()
-                    ?.let { return it }
-            }.onFailure { XplerLog.e("$TAG 实例化 RetrofitFactory 失败: ${it.message}") }
+            }.onFailure { BatchDebug.log("createNewServiceImplInstanceForSPI 失败: ${it.message}") }
         }
 
         val factoryInterface = loadClass("com.bytedance.ies.ugc.aweme.network.IRetrofitFactory", loader)
@@ -520,31 +657,28 @@ object UserPostApi {
                         .invoke(manager, factoryInterface)
                         ?.let { return it }
                 }
-            }.onFailure { XplerLog.e("$TAG ServiceManager 取 IRetrofitFactory 失败: ${it.message}") }
+            }.onFailure { BatchDebug.log("ServiceManager 取 IRetrofitFactory 失败: ${it.message}") }
 
             runCatching {
                 val monster = loadClass("com.ss.android.ugc.MonsterSingleTon", loader)
                 monster?.getMethod("getServiceFromMap", Class::class.java, Boolean::class.javaPrimitiveType)
                     ?.invoke(null, factoryInterface, false)
                     ?.let { return it }
-            }.onFailure { XplerLog.e("$TAG MonsterSingleTon 取 IRetrofitFactory 失败: ${it.message}") }
+            }.onFailure { BatchDebug.log("MonsterSingleTon 取 IRetrofitFactory 失败: ${it.message}") }
         }
-
         return null
     }
 
     private fun createRetrofit(factory: Any, host: String): Any? {
         val factoryInterface = loadClass("com.bytedance.ies.ugc.aweme.network.IRetrofitFactory", factory.javaClass.classLoader)
 
-        // 首选 create(String)，内部就是 createBuilder(host).build()
         if (factoryInterface != null) {
             runCatching {
                 factoryInterface.getMethod("create", String::class.java).invoke(factory, host)
                     ?.let { return it }
-            }.onFailure { XplerLog.e("$TAG IRetrofitFactory.create 失败: ${it.message}") }
+            }.onFailure { BatchDebug.log("IRetrofitFactory.create 失败: ${it.message}") }
         }
 
-        // 兜底：createBuilder(host) -> build()
         val builder = runCatching {
             if (factoryInterface != null) {
                 factoryInterface.getMethod("createBuilder", String::class.java).invoke(factory, host)
@@ -552,23 +686,21 @@ object UserPostApi {
                 factory.javaClass.getMethod("createBuilder", String::class.java).invoke(factory, host)
             }
         }.getOrElse {
-            XplerLog.e("$TAG createBuilder 失败: ${it.javaClass.name}: ${it.message}")
+            BatchDebug.log("createBuilder 失败: ${it.javaClass.name}: ${it.message}")
             return null
         } ?: return null
 
         val builderInterface = loadClass("com.bytedance.ies.ugc.aweme.network.IBuilder", builder.javaClass.classLoader)
-        val retrofit = runCatching {
+        return runCatching {
             if (builderInterface != null) {
                 builderInterface.getMethod("build").invoke(builder)
             } else {
                 builder.javaClass.getMethod("build").invoke(builder)
             }
         }.getOrElse {
-            XplerLog.e("$TAG IBuilder.build 失败: ${it.javaClass.name}: ${it.message}")
-            return null
+            BatchDebug.log("IBuilder.build 失败: ${it.javaClass.name}: ${it.message}")
+            null
         }
-
-        return retrofit
     }
 
     private fun createService(retrofit: Any, clazz: Class<*>): Any? {

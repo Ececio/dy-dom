@@ -47,6 +47,7 @@ class DownloadAllUserWorksLogic(
     private var secUid: String? = null
     private var uid: String = ""
     private var awemeCount: Int = 0
+    private var lastTotal: Int = 0
 
     private lateinit var videoDir: File
     private lateinit var imageDir: File
@@ -63,6 +64,11 @@ class DownloadAllUserWorksLogic(
         secUid = user.readText("secUid", "sec_uid")
         uid = user.uid.orEmpty()
         awemeCount = user.readInt("awemeCount", "aweme_count") ?: 0
+
+        XplerLog.d(
+            "DownloadAllWorks 作者: nickname=$nickname, uniqueId=${user.uniqueId}, shortId=${user.shortId}, " +
+                    "secUid=$secUid, uid=$uid, awemeCount=$awemeCount"
+        )
 
         if (secUid.isNullOrBlank() && uid.isBlank()) {
             hook.showToast(context, "未获取到作者 ID，无法下载")
@@ -93,6 +99,9 @@ class DownloadAllUserWorksLogic(
     }
 
     private fun startDownload() {
+        BatchDebug.reset(context)
+        BatchDebug.log("开始: nickname=$nickname shortId=$shortId secUid=$secUid uid=$uid awemeCount=$awemeCount")
+
         if (!UserPostApi.isAvailable()) {
             val reason = UserPostApi.lastError()
             hook.showMessageDialog(
@@ -142,50 +151,95 @@ class DownloadAllUserWorksLogic(
             throw e
         } catch (e: Throwable) {
             XplerLog.e(e)
+            BatchDebug.log("中断: ${e.javaClass.name}: ${e.message}")
+            lastTotal = 0
             failed = true
             "下载中断: ${e.javaClass.simpleName} ${e.message.orEmpty()}".trim()
         }
 
         notifyFinish(notify, summary, finish, failed)
-        hook.showToast(context, summary)
+
+        if (lastTotal == 0) {
+            // 一个作品都没拿到：直接弹窗展示调试信息，并带复制按钮，方便反馈
+            hook.refresh {
+                hook.showMessageDialog(
+                    context = context,
+                    title = NOTIFY_TITLE,
+                    content = summary,
+                    singleButton = true,
+                    confirm = "知道了",
+                    copyText = summary,
+                )
+            }
+        } else {
+            hook.showToast(context, summary)
+        }
     }
 
     private suspend fun downloadAll(notify: IProgressNotification): String {
+        lastTotal = 0
         var cursor = 0L
         var page = 0
         var index = 0
         var success = 0
         var failed = 0
+        var total = 0
         var error: String? = null
         val seen = HashSet<String>()
 
         while (page < MAX_PAGES) {
             val result = UserPostApi.fetchPage(secUid, uid, cursor, PAGE_SIZE)
+            XplerLog.d(
+                "DownloadAllWorks 第${page + 1}页: 作品=${result.awemes.size}, " +
+                        "hasMore=${result.hasMore}, maxCursor=${result.maxCursor}, error=${result.error}"
+            )
             if (result.error != null) {
                 error = result.error
                 break
             }
+            page++
             if (result.awemes.isEmpty()) break
 
+            var added = 0
             for (item in result.awemes) {
                 val id = item.aid.orEmpty()
                 if (id.isNotBlank() && !seen.add(id)) continue
 
+                added++
+                total++
                 index++
                 if (downloadAweme(item, notify, index)) success++ else failed++
             }
 
-            page++
+            // 整页都是重复作品说明游标没前进，直接结束，避免空转
+            if (added == 0) break
             if (!result.hasMore) break
             // 游标不前进说明接口已到底，避免死循环重复下载
             if (result.maxCursor == cursor) break
             cursor = result.maxCursor
         }
 
-        return buildString {
+        XplerLog.d("DownloadAllWorks 完成: 页数=$page, 作品=$total, 成功=$success, 失败=$failed, error=$error")
+
+        val summary = buildString {
             append("完成: 成功 ").append(success).append(" 个")
             if (failed > 0) append(", 失败 ").append(failed).append(" 个")
+            append("\n拉取 ").append(page).append(" 页, 共 ").append(total).append(" 个作品")
             if (error != null) append("\n").append(error)
+        }
+
+        BatchDebug.log("结果: $summary")
+        lastTotal = total
+
+        // 一个都没拿到时把调试信息一起弹出来，省得再抓 logcat
+        return if (total == 0) {
+            buildString {
+                append(summary)
+                append("\n\n--- 调试信息 ---\n")
+                append(BatchDebug.tail())
+            }
+        } else {
+            summary
         }
     }
 
@@ -193,6 +247,11 @@ class DownloadAllUserWorksLogic(
         val baseName = DownloadNaming.fileName(nickname, shortId, uid, item.desc)
 
         val images = item.getImageUrlList()
+        XplerLog.d(
+            "DownloadAllWorks [$index] aid=${item.aid}, desc=${item.desc?.take(40)}, " +
+                    "images=${images.size}, videoUrls=" +
+                    "${item.getAutoVideoUrlList().size}"
+        )
         if (images.isNotEmpty()) {
             var downloaded = 0
             val dir = imageDir.need()
@@ -222,7 +281,10 @@ class DownloadAllUserWorksLogic(
             "Auto" -> item.getAutoVideoUrlList()
             else -> emptyList()
         }
-        val url = urlList.firstOrNull { it.isNotBlank() } ?: return false
+        val url = urlList.firstOrNull { it.isNotBlank() } ?: run {
+            XplerLog.d("DownloadAllWorks [$index] 没有可用视频地址, videoCoding=${config.videoCoding}, urls=${urlList.size}")
+            return false
+        }
 
         val file = DownloadNaming.uniqueFile(videoDir.need(), baseName.secureFilename(".mp4"))
         val result = downloadFile(url, file, notify, "第${index}个 %s%%")
@@ -231,6 +293,7 @@ class DownloadAllUserWorksLogic(
             return false
         }
 
+        XplerLog.d("DownloadAllWorks [$index] 保存成功: ${result.absolutePath} (${result.length()} bytes)")
         KMediaUtils.notifyMediaUpdate(context, result.absolutePath)
         return true
     }

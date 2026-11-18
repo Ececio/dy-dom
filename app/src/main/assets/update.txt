@@ -1,3 +1,9 @@
+v1.3.13
+修复「下载所有作品」在抖音 31.5.0 返回空列表的问题
+改用抖音自己在用的作品列表接口（getPublishAwemeList / getFeedItemList / fetchPublicList 依次兜底）
+失败时弹窗直接显示调试信息（接口、域名、参数、响应摘要），并带复制按钮
+调试日志同时写入 Download/Freedom/batch_debug.log
+
 v1.3.12
 修复「下载所有作品」在抖音 31.5.0 提示“未找到作品列表接口”的问题
 接口改为通过抖音自己的 RetrofitFactory 创建，签名与公共参数由 App 自动补全
