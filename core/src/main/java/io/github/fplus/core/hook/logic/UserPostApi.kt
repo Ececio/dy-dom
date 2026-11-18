@@ -52,6 +52,11 @@ object UserPostApi {
         val methodName: String,
         /** 是否支持翻页（有 cursor 参数）；不支持时只用于第一页 */
         val paging: Boolean,
+        /**
+         * 是否优先复用 App 自己创建的接口实例（`PostAwemeRepo` 里的 `TabApi`）。
+         * App 实例自带正确的域名和拦截器，比我们自己 `create` 的更接近主页真实请求。
+         */
+        val useAppRepo: Boolean = false,
         val values: (secUid: String?, uid: String?, cursor: Long, count: Int) -> Map<String, Any?>,
     )
 
@@ -98,6 +103,7 @@ object UserPostApi {
             className = "com.ss.android.ugc.aweme.profile.tab.api.PostAwemeRepo\$TabApi",
             methodName = "fetchPublicList",
             paging = true,
+            useAppRepo = true,
         ) { secUid, uid, cursor, count -> postParams(secUid, uid, cursor, count) },
     )
 
@@ -125,12 +131,30 @@ object UserPostApi {
         val api: Any,
         val method: Method,
         val host: String,
+        /** 是否直接用了 App 自己创建的接口实例 */
+        val viaApp: Boolean = false,
     ) {
-        val label: String get() = "${spec.label}@${host.removePrefix("https://")}"
+        val label: String
+            get() = buildString {
+                append(spec.label)
+                append('@')
+                append(host.removePrefix("https://").removeSuffix("/"))
+                if (viaApp) append("(App)")
+            }
     }
 
     @Volatile
     private var endpoints: List<Endpoint>? = null
+
+    /** App 自己创建的主页 TabApi 代理实例（从 `PostAwemeRepo` 字段里取） */
+    @Volatile
+    private var appTab: Any? = null
+
+    @Volatile
+    private var appTabUrl: String? = null
+
+    @Volatile
+    private var appTabResolved: Boolean = false
 
     @Volatile
     private var lastError: String? = null
@@ -807,39 +831,60 @@ object UserPostApi {
         buildError = null
         val loader = hostClassLoader()
         val factory = retrofitFactory(loader)
-        if (factory == null) {
+        val appTab = appTabApiInfo()
+        if (factory == null && appTab == null) {
             buildError = "找不到 IRetrofitFactory"
             BatchDebug.log(buildError!!)
             return emptyList()
         }
 
-        val hosts = hostCandidates(loader)
+        val hosts = hostCandidates(loader, appTab?.second)
         BatchDebug.log("候选域名: $hosts")
 
         val result = ArrayList<Endpoint>()
         val failures = ArrayList<String>()
 
-        for (host in hosts) {
-            val retrofit = runCatching { createRetrofit(factory, host) }
-                .onFailure { BatchDebug.log("创建 Retrofit 失败($host): ${it.message}") }
-                .getOrNull() ?: continue
-
+        // 0) 最优先：App 自己创建的主页 TabApi 实例（域名/拦截器/公共参数都是主页真实在用的）
+        if (appTab != null) {
+            val service = appTab.first
             for (spec in SPECS) {
-                val clazz = loadClass(spec.className, loader)
-                if (clazz == null) {
-                    failures.add("${spec.className} 不存在")
-                    continue
-                }
-                val method = clazz.declaredMethods.firstOrNull { it.name == spec.methodName }
+                if (!spec.useAppRepo) continue
+                val method = service.javaClass.methods.firstOrNull { it.name == spec.methodName }
                 if (method == null) {
-                    failures.add("${spec.className}#${spec.methodName} 不存在")
+                    failures.add("${spec.className}#${spec.methodName} 不在 App TabApi 里")
                     continue
                 }
-                val api = runCatching { createService(retrofit, clazz) }
-                    .onFailure { BatchDebug.log("创建服务失败(${spec.label}): ${it.javaClass.name}: ${it.message}") }
-                    .getOrNull() ?: continue
-                result.add(Endpoint(spec, api, method, host))
+                result.add(Endpoint(spec, service, method, appTab.second, viaApp = true))
             }
+        }
+
+        if (factory != null) {
+            for (host in hosts) {
+                val retrofit = runCatching { createRetrofit(factory, host) }
+                    .onFailure { BatchDebug.log("创建 Retrofit 失败($host): ${it.message}") }
+                    .getOrNull() ?: continue
+
+                for (spec in SPECS) {
+                    // App 自己的实例已经注册过了，同一域名不再重复创建
+                    if (spec.useAppRepo && appTab != null && host == appTab.second) continue
+                    val clazz = loadClass(spec.className, loader)
+                    if (clazz == null) {
+                        failures.add("${spec.className} 不存在")
+                        continue
+                    }
+                    val method = clazz.declaredMethods.firstOrNull { it.name == spec.methodName }
+                    if (method == null) {
+                        failures.add("${spec.className}#${spec.methodName} 不存在")
+                        continue
+                    }
+                    val api = runCatching { createService(retrofit, clazz) }
+                        .onFailure { BatchDebug.log("创建服务失败(${spec.label}): ${it.javaClass.name}: ${it.message}") }
+                        .getOrNull() ?: continue
+                    result.add(Endpoint(spec, api, method, host))
+                }
+            }
+        } else {
+            BatchDebug.log("IRetrofitFactory 不可用，只能用 App 自己的 TabApi")
         }
 
         if (result.isEmpty()) {
@@ -849,6 +894,84 @@ object UserPostApi {
             BatchDebug.log("可用接口: " + result.joinToString { it.label })
         }
         return result
+    }
+
+    /**
+     * App 自己创建的主页 TabApi 实例（`PostAwemeRepo` 里的 `TabApi` 字段）及其 baseUrl。
+     *
+     * 为什么值得折腾：我们自己 `RetrofitFactory.create(host)` 出来的实例，参数/签名/域名可能
+     * 和主页真实请求有细微差别（实测 `/aweme/v1/aweme/post/` 全域名空列表、weak post 全部
+     * `status=5 参数不合法`）。直接复用主页正在用的那个代理对象，等于把「主页发什么」原样搬过来。
+     *
+     * @return first=TabApi 代理实例, second=baseUrl（可能为空串）
+     */
+    private fun appTabApiInfo(): Pair<Any, String>? {
+        appTab?.let { return it to appTabUrl.orEmpty() }
+        synchronized(this) {
+            appTab?.let { return it to appTabUrl.orEmpty() }
+            if (appTabResolved) return null
+            appTabResolved = true
+
+            val loader = hostClassLoader()
+            val repoClass = loadClass(WEAK_REPO_CLASS, loader) ?: return null
+            val repo = runCatching {
+                repoClass.getDeclaredConstructor().apply { isAccessible = true }.newInstance()
+            }.onFailure {
+                BatchDebug.log("App TabApi: 创建 PostAwemeRepo 失败: ${it.javaClass.simpleName}: ${it.message}")
+            }.getOrNull() ?: return null
+
+            // TabApi 的混淆名每个版本都变，按类型名匹配（`PostAwemeRepo$TabApi`）
+            val field = repoClass.declaredFields.firstOrNull { it.type.name.endsWith("TabApi") }
+                ?: repoClass.declaredFields.firstOrNull {
+                    runCatching { java.lang.reflect.Proxy.isProxyClass(it.type) }.getOrDefault(false)
+                }
+            if (field == null) {
+                BatchDebug.log(
+                    "App TabApi: PostAwemeRepo 里没有 TabApi 字段: " +
+                            repoClass.declaredFields.joinToString { "${it.name}:${it.type.name}" }
+                )
+                return null
+            }
+
+            val service = runCatching {
+                field.isAccessible = true
+                field.get(repo)
+            }.onFailure {
+                BatchDebug.log("App TabApi: 读取字段 ${field.name} 失败: ${it.message}")
+            }.getOrNull() ?: return null
+
+            val url = baseUrlOfProxy(service).orEmpty()
+            appTab = service
+            appTabUrl = url
+            BatchDebug.log(
+                "App TabApi: field=${field.name} type=${field.type.name} " +
+                        "baseUrl=${url.ifEmpty { "?" }}"
+            )
+            return service to url
+        }
+    }
+
+    /** 从 Retrofit 动态代理上读 baseUrl：handler(`Retrofit$1`) -> this$0 -> server() -> getUrl() */
+    private fun baseUrlOfProxy(service: Any): String? {
+        val raw = runCatching {
+            val handler = java.lang.reflect.Proxy.getInvocationHandler(service)
+            val clazz = handler.javaClass
+            val field = clazz.declaredFields.firstOrNull { it.name == "this\$0" }
+                ?: clazz.declaredFields.firstOrNull { it.type.name.endsWith(".Retrofit") }
+                ?: return@runCatching null
+            field.isAccessible = true
+            val retrofit = field.get(handler) ?: return@runCatching null
+            val server = retrofit.javaClass.getMethod("server").invoke(retrofit)
+                ?: return@runCatching null
+            server.javaClass.getMethod("getUrl").invoke(server) as? String
+        }.onFailure {
+            BatchDebug.log("App TabApi: 读取 baseUrl 失败: ${it.javaClass.simpleName}: ${it.message}")
+        }.getOrNull()
+
+        val host = raw?.trim()?.trimEnd('/') ?: return null
+        if (host.isEmpty()) return null
+        val normalized = if (host.startsWith("http")) host else "https://$host"
+        return normalized.takeIf { isValidHost(it) }
     }
 
     /**
@@ -1170,8 +1293,10 @@ object UserPostApi {
      * 先读 `AppContextManager`，再读 `CommonConstants`：后者静态初始化会再取一遍 ApiHost，
      * 万一初始化异常，类会进入 Error 状态，后续都取不到。
      */
-    private fun hostCandidates(loader: ClassLoader?): List<String> {
+    private fun hostCandidates(loader: ClassLoader?, appHost: String? = null): List<String> {
         val hosts = LinkedHashSet<String>()
+        if (!appHost.isNullOrBlank()) hosts.add(appHost)
+        appTabUrl?.let { hosts.add(it) }
         appApiHost(loader)?.let { hosts.add(it) }
         hosts.addAll(FALLBACK_HOSTS)
         return hosts.filter { isValidHost(it) }
@@ -1194,23 +1319,32 @@ object UserPostApi {
     private fun appApiHost(loader: ClassLoader?): String? {
         val constants = loadClass("com.ss.android.constants.CommonConstants", loader)
         if (constants != null) {
-            for (name in arrayOf("LIZIZ", "API_URL_PREFIX_SI", "API_URL_PREFIX_API", "LIZ")) {
-                val value = runCatching {
-                    constants.getField(name).apply { isAccessible = true }.get(null) as? String
-                }.getOrNull()
-                if (isValidHost(value)) return value
-            }
+            // 把静态字段原值打出来：以前只取 LIZIZ，取不到时完全不知道是空、是 null 还是别的值
+            val values = LinkedHashMap<String, String?>()
             constants.fields.forEach { field ->
                 if (field.type != String::class.java) return@forEach
-                val value = runCatching { field.isAccessible = true; field.get(null) as? String }.getOrNull()
+                val value = runCatching {
+                    field.isAccessible = true
+                    field.get(null) as? String
+                }.getOrNull()
+                values[field.name] = value
+            }
+            BatchDebug.log(
+                "CommonConstants: " + values.entries.joinToString { "${it.key}=${it.value?.take(120)}" }
+            )
+
+            for (name in arrayOf("LIZIZ", "API_URL_PREFIX_SI", "API_URL_PREFIX_API", "LIZ")) {
+                val value = values[name]
                 if (isValidHost(value)) return value
             }
+            values.values.firstOrNull { isValidHost(it) }?.let { return it }
         }
 
         runCatching {
             val manager = loadClass("com.bytedance.ies.ugc.appcontext.AppContextManager", loader) ?: return@runCatching
             val apiHost = manager.getMethod("getApiHost").invoke(null) ?: return@runCatching
             val host = apiHost.javaClass.getField("API_HOST_I_SNSSDK").get(apiHost) as? String
+            BatchDebug.log("AppContextManager.API_HOST_I_SNSSDK=${host?.take(120)}")
             val raw = host?.trim()
             if (!raw.isNullOrEmpty()) {
                 val normalized = if (raw.startsWith("http")) raw else "https://$raw"

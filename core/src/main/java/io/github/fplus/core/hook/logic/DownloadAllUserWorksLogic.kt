@@ -101,6 +101,8 @@ class DownloadAllUserWorksLogic(
     private fun startDownload() {
         BatchDebug.reset(context)
         BatchDebug.log("开始: nickname=$nickname shortId=$shortId secUid=$secUid uid=$uid awemeCount=$awemeCount")
+        // App 自己发请求的抓包日志（重启抖音后、进入作者主页时就会开始记录）
+        BatchDebug.log("抓包日志: ${BatchDebug.tapPath().ifEmpty { "app_net_tap.log(尚未创建)" }}")
 
         if (!UserPostApi.isAvailable()) {
             val reason = UserPostApi.lastError()

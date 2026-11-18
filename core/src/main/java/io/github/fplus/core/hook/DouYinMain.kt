@@ -99,6 +99,8 @@ class DouYinMain(private val app: Application) {
                     HChatListRecyclerViewAdapter()
                     HChatListRecyclerViewAdapterNew()
                     HChatListRecalledHint()
+                    // 抓 App 自己的网络调用，只在排查「下载所有作品」时用，日志写 app_net_tap.log
+                    HRetrofitProxyTap()
                 }
             )
 

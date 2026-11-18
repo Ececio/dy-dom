@@ -1,3 +1,10 @@
+v1.3.19
+新增抓包日志：记录 App 自己调用 /aweme/ 接口的路径、参数和域名，写到 Download/Freedom/app_net_tap.log
+「下载所有作品」优先复用 App 自己创建的主页 TabApi 实例，域名和拦截器与主页真实请求一致
+启动时打印 CommonConstants 所有字符串字段原值，域名取不到时能看出是空值还是初始化失败
+「下载所有作品」允许直接使用 App TabApi 的 baseUrl 作为首选域名
+日志里会打印抓包日志路径，便于反馈时一并提交
+
 v1.3.18
 「下载所有作品」修复 weak post 一直返回「参数不合法」：item_list_id 必须传已有作品 ID 的 JSON 数组，之前传的是空字符串
 weak post 改用 8 参构造透传 count（之前 6 参构造内部把 count 写死 20），一次最多取 50 个作品 ID；若仍被拒会自动改回 20 重试
