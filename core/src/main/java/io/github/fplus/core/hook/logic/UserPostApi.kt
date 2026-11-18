@@ -40,6 +40,9 @@ data class UserPostPage(
 object UserPostApi {
     private const val TAG = "UserPostApi"
 
+    /** 等宿主 Deferred 的最长时间 */
+    private const val DEFERRED_TIMEOUT_MS = 20_000L
+
     /** 一个候选接口：类名 + 方法名 + 参数取值规则 */
     private class Spec(
         val label: String,
@@ -344,6 +347,38 @@ object UserPostApi {
         return params
     }
 
+    /**
+     * weak post（`/aweme/v1/aweme/weak/post/`）的参数。
+     *
+     * 注意游标字段名是 `cursor`，不是 `max_cursor`；老的 `/aweme/v1/aweme/post/` 用 `max_cursor`。
+     * 传错会被服务端直接拒绝（status=5 参数不合法）。
+     */
+    private fun weakParams(
+        secUid: String?,
+        uid: String?,
+        cursor: Long,
+        count: Int,
+    ): Map<String, Any?> {
+        val params = linkedMapOf<String, Any?>()
+        params["cursor"] = cursor.toString()
+        if (!secUid.isNullOrBlank()) params["sec_user_id"] = secUid
+        else if (!uid.isNullOrBlank()) params["user_id"] = uid
+        params["count"] = count.toString()
+        params["publish_video_strategy_type"] = "0"
+        params["source"] = "0"
+        params["user_avatar_shrink"] = ""
+        params["video_cover_shrink"] = ""
+        params["show_live_replay_strategy"] = "0"
+        params["is_order_flow"] = "0"
+        params["page_from"] = "2"
+        params["location_permission"] = "0"
+        params["familiar_collects"] = "0"
+        params["post_serial_strategy"] = "0"
+        params["item_list_id"] = ""
+        params["collection_item_list_id"] = "{}"
+        return params
+    }
+
     private suspend fun invoke(
         endpoint: Endpoint,
         values: Map<String, Any?>,
@@ -383,8 +418,62 @@ object UserPostApi {
 
     /** 方法最后一个是 Continuation 参数即为 suspend 方法 */
     private fun isSuspendMethod(method: Method): Boolean {
-        return method.parameterTypes.lastOrNull()
-            ?.let { Continuation::class.java.isAssignableFrom(it) } == true
+        return method.parameterTypes.lastOrNull()?.let { isContinuation(it) } == true
+    }
+
+    /**
+     * 宿主和模块各自带了一份 kotlin-stdlib，`Continuation::class.java` 和宿主的
+     * `kotlin.coroutines.Continuation` 不是同一个 Class，所以只能按名字判断。
+     */
+    private fun isContinuation(type: Class<*>): Boolean {
+        return type.name == "kotlin.coroutines.Continuation"
+    }
+
+    /**
+     * 给宿主的 suspend 方法准备 Continuation。
+     *
+     * 直接传我们自己的 CancellableContinuation 会 `argument type mismatch`（两个 ClassLoader 的接口类不同），
+     * 所以用宿主的接口类型做动态代理，把 `resumeWith(宿主 Result)` 翻译成我们自己的 Result。
+     */
+    private fun wrapContinuation(type: Class<*>, target: Continuation<*>): Any {
+        val loader = type.classLoader ?: target.javaClass.classLoader
+        val emptyContext = runCatching {
+            Class.forName("kotlin.coroutines.EmptyCoroutineContext", false, loader)
+                .getField("INSTANCE")
+                .get(null)
+        }.getOrNull()
+
+        return java.lang.reflect.Proxy.newProxyInstance(loader, arrayOf(type)) { proxy, method, args ->
+            when (method.name) {
+                "getContext" -> emptyContext
+                "resumeWith" -> {
+                    val state = args?.firstOrNull()
+                    val failure = failureOf(state)
+                    @Suppress("UNCHECKED_CAST")
+                    val cont = target as Continuation<Any?>
+                    if (failure != null) {
+                        cont.resumeWith(Result.failure(failure))
+                    } else {
+                        cont.resumeWith(Result.success(state))
+                    }
+                    null
+                }
+                "toString" -> "FreedomPlusContinuation"
+                "hashCode" -> System.identityHashCode(target)
+                "equals" -> proxy === args?.firstOrNull()
+                else -> null
+            }
+        }
+    }
+
+    /** 宿主的 kotlin.Result 失败状态被擦除成 `kotlin.Result$Failure`，从里面取回异常 */
+    private fun failureOf(state: Any?): Throwable? {
+        if (state == null) return null
+        val cls = state.javaClass
+        if (!cls.name.endsWith("Result\$Failure")) return null
+        return runCatching {
+            cls.getDeclaredField("exception").apply { isAccessible = true }.get(state) as? Throwable
+        }.getOrNull()
     }
 
     private fun toStringMap(values: Map<String, Any?>): Map<String, String> {
@@ -408,7 +497,8 @@ object UserPostApi {
         return Array(types.size) { index ->
             val type = types[index]
             when {
-                Continuation::class.java.isAssignableFrom(type) -> continuation
+                isContinuation(type) ->
+                    continuation?.let { wrapContinuation(type, it) }
                 Map::class.java.isAssignableFrom(type) -> params
                 type == Int::class.javaPrimitiveType || type == Integer::class.java -> count
                 type == Long::class.javaPrimitiveType || type == java.lang.Long::class.java -> cursor
@@ -428,8 +518,8 @@ object UserPostApi {
         val types = method.parameterTypes
         return Array(types.size) { index ->
             val type = types[index]
-            if (Continuation::class.java.isAssignableFrom(type)) {
-                continuation
+            if (isContinuation(type)) {
+                continuation?.let { wrapContinuation(type, it) }
             } else {
                 val name = paramName(method, index)
                 if (name != null && values.containsKey(name)) {
@@ -479,29 +569,59 @@ object UserPostApi {
 
     /** Deferred / Single / Observable / Call / 直接返回实体 */
     private suspend fun awaitResult(result: Any): Any? {
-        if (result is kotlinx.coroutines.Deferred<*>) return result.await()
+        val cls = result.javaClass
+        if (implements(cls, "kotlinx.coroutines.Deferred") || cls.name.contains("Deferred")) {
+            return awaitDeferred(result)
+        }
 
-        val name = result.javaClass.name
-        if (implements(result.javaClass, "io.reactivex.Single") ||
-            implements(result.javaClass, "io.reactivex.Maybe")
+        val name = cls.name
+        if (implements(cls, "io.reactivex.Single") ||
+            implements(cls, "io.reactivex.Maybe")
         ) {
-            return runCatching { result.javaClass.getMethod("blockingGet").invoke(result) }
+            return runCatching { cls.getMethod("blockingGet").invoke(result) }
                 .getOrElse { throw it.cause ?: it }
         }
-        if (implements(result.javaClass, "io.reactivex.Observable") ||
-            implements(result.javaClass, "io.reactivex.Flowable")
+        if (implements(cls, "io.reactivex.Observable") ||
+            implements(cls, "io.reactivex.Flowable")
         ) {
-            return runCatching { result.javaClass.getMethod("blockingFirst").invoke(result) }
+            return runCatching { cls.getMethod("blockingFirst").invoke(result) }
                 .getOrElse { throw it.cause ?: it }
         }
         if (name.contains("retrofit2.Call") ||
-            implements(result.javaClass, "com.bytedance.retrofit2.Call") ||
-            implements(result.javaClass, "retrofit2.Call")
+            implements(cls, "com.bytedance.retrofit2.Call") ||
+            implements(cls, "retrofit2.Call")
         ) {
-            val response = result.javaClass.getMethod("execute").invoke(result) ?: return null
+            val response = cls.getMethod("execute").invoke(result) ?: return null
             return response.javaClass.getMethod("body").invoke(response)
         }
         return result
+    }
+
+    /**
+     * 等待宿主的 Deferred。
+     *
+     * 宿主和模块各带一份 kotlinx-coroutines，`result is Deferred` 永远为 false，`await()` 也调不了，
+     * 所以老老实实轮询 `isCompleted` / `getCompleted`（都在 IO 线程，不会卡 UI）。
+     */
+    private suspend fun awaitDeferred(deferred: Any): Any? {
+        val cls = deferred.javaClass
+        val isCompleted = runCatching { cls.getMethod("isCompleted") }.getOrNull()
+        val getCompleted = runCatching { cls.getMethod("getCompleted") }.getOrNull()
+            ?: return null
+
+        val deadline = System.currentTimeMillis() + DEFERRED_TIMEOUT_MS
+        while (System.currentTimeMillis() < deadline) {
+            val done = isCompleted?.let {
+                runCatching { it.invoke(deferred) as? Boolean }.getOrNull()
+            } ?: true
+            if (done) {
+                return runCatching { getCompleted.invoke(deferred) }
+                    .getOrElse { throw it.cause ?: it }
+            }
+            withContext(Dispatchers.IO) { Thread.sleep(80) }
+        }
+        BatchDebug.log("等待 Deferred 超时(${DEFERRED_TIMEOUT_MS}ms)")
+        return null
     }
 
     private fun implements(type: Class<*>, target: String): Boolean {
@@ -519,9 +639,7 @@ object UserPostApi {
 
         val statusCode = (readValue(list, "statusCode", "status_code", "getStatusCode") as? Number)?.toInt() ?: 0
         val statusMsg = readValue(list, "statusMsg", "status_msg", "getStatusMsg")?.toString().orEmpty()
-        val awemes = (readValue(list, "items", "getItems") as? List<*>)
-            ?.filterIsInstance<Aweme>()
-            ?: emptyList()
+        val awemes = findAwemeList(list)
 
         if (awemes.isEmpty() && statusCode != 0) {
             return UserPostPage(emptyList(), false, 0L, "接口错误 $statusCode $statusMsg".trim())
@@ -537,16 +655,45 @@ object UserPostApi {
         return UserPostPage(awemes, hasMore, maxCursor)
     }
 
+    /**
+     * 作品列表不总是叫 `items`：`FeedItemResponse` 唯一字段被混淆成 `LIZ`。
+     * 所以先按常见名字找，再扫所有 List 字段，取第一个装着 Aweme 的。
+     */
+    private fun findAwemeList(target: Any): List<Aweme> {
+        (readValue(target, "items", "getItems") as? List<*>)
+            ?.filterIsInstance<Aweme>()
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { return it }
+
+        var type: Class<*>? = target.javaClass
+        while (type != null && type != Any::class.java) {
+            for (field in type.declaredFields) {
+                if (!List::class.java.isAssignableFrom(field.type)) continue
+                val value = runCatching {
+                    field.isAccessible = true
+                    field.get(target) as? List<*>
+                }.getOrNull() ?: continue
+                val awemes = value.filterIsInstance<Aweme>()
+                if (awemes.isNotEmpty()) {
+                    BatchDebug.log("作品列表字段: ${type.simpleName}.${field.name} (${awemes.size})")
+                    return awemes
+                }
+            }
+            type = type.superclass
+        }
+        return emptyList()
+    }
+
     /** 只用于日志：把响应关键字段压成一行 */
     private fun describe(raw: Any?): String {
         if (raw == null) return "null"
-        val items = readValue(raw, "items", "getItems") as? List<*>
+        val awemes = findAwemeList(raw)
         return buildString {
             append("type=").append(raw.javaClass.simpleName)
             append(" status=").append(readValue(raw, "status_code", "statusCode", "getStatusCode"))
             append(" msg=").append(readValue(raw, "status_msg", "statusMsg", "getStatusMsg"))
-            append(" items=").append(items?.size)
-            append(" first=").append(items?.firstOrNull()?.javaClass?.simpleName)
+            append(" items=").append(if (awemes.isEmpty()) null else awemes.size)
+            append(" first=").append(awemes.firstOrNull()?.javaClass?.simpleName)
             append(" hasMore=").append(readValue(raw, "hasMore", "isHasMore"))
             append(" maxCursor=").append(readValue(raw, "maxCursor", "getMaxCursor"))
         }
@@ -665,7 +812,7 @@ object UserPostApi {
                 val retrofit = createRetrofit(factory, host) ?: return@runCatching emptyList()
                 val api = createService(retrofit, clazz) ?: return@runCatching emptyList()
 
-                val params = toStringMap(postParams(secUid, uid, 0L, count))
+                val params = toStringMap(weakParams(secUid, uid, 0L, count))
                 method.isAccessible = true
                 val raw = method.invoke(api, params) ?: return@runCatching emptyList()
                 val list = awaitResultBlocking(raw) ?: return@runCatching emptyList()

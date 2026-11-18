@@ -1,3 +1,11 @@
+v1.3.15
+修复「下载所有作品」仍然漏图文作品
+修复 weak post 对账接口参数不合法（游标字段应为 cursor 而不是 max_cursor），现在能拿到主页完整作品 ID
+修复 Deferred 接口（fetchPublicList）一直读不到结果的问题：宿主与模块的 kotlinx-coroutines 是两份，改为轮询等待
+修复 suspend 接口（fetchPublicListInCoroutine）调用报 Continuation 空指针的问题
+兼容被混淆的作品列表字段（FeedItemResponse.LIZ），图文/视频都能解析出来
+日志新增「作品列表字段」和更完整的响应摘要
+
 v1.3.14
 修复「下载所有作品」漏作品：图文作品被作品列表接口过滤掉，作者 3 个作品只下载 2 个
 第一页会同时问所有可用接口并合并结果，再与主页在用的 weak post 列表对账
