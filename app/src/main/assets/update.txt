@@ -1,3 +1,10 @@
+v1.3.14
+修复「下载所有作品」漏作品：图文作品被作品列表接口过滤掉，作者 3 个作品只下载 2 个
+第一页会同时问所有可用接口并合并结果，再与主页在用的 weak post 列表对账
+发现少的作品时，用 /aweme/v1/multi/aweme/detail/ 按 ID 补取完整信息再下载
+图片地址改用 urlList + downloadUrlList，任一为空或多条镜像都会依次重试
+视频地址同样支持多镜像重试，不再只试第一条
+
 v1.3.13
 修复「下载所有作品」在抖音 31.5.0 返回空列表的问题
 改用抖音自己在用的作品列表接口（getPublishAwemeList / getFeedItemList / fetchPublicList 依次兜底）

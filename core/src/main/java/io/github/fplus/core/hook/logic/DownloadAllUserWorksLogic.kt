@@ -256,20 +256,33 @@ class DownloadAllUserWorksLogic(
             var downloaded = 0
             val dir = imageDir.need()
             images.forEachIndexed { imageIndex, struct ->
-                val url = struct.urlList.firstOrNull { it.isNotBlank() } ?: return@forEachIndexed
+                // urlList 可能是 null（部分图文只给 downloadUrlList / maskUrlList），也可能是多条镜像
+                val candidates = (struct.urlList.orEmpty() + struct.downloadUrlList.orEmpty())
+                    .filter { it.isNotBlank() }
+                    .distinct()
+                if (candidates.isEmpty()) {
+                    XplerLog.d("DownloadAllWorks [$index] 第${imageIndex + 1}张图没有地址, uri=${struct.uri}")
+                    BatchDebug.log("第${imageIndex + 1}张图没有地址 uri=${struct.uri}")
+                    return@forEachIndexed
+                }
                 val file = DownloadNaming.uniqueFile(
                     dir,
                     baseName.secureFilename("_${imageIndex + 1}.jpg"),
                 )
-                val result = downloadFile(url, file, notify, "第${index}个 ${imageIndex}/${images.size} %s%%")
-                if (result == null) {
+                var result: File? = null
+                for (url in candidates) {
+                    val got = downloadFile(url, file, notify, "第${index}个 ${imageIndex}/${images.size} %s%%")
+                    if (got != null) {
+                        result = got
+                        break
+                    }
                     file.deleteIfEmpty()
-                    return@forEachIndexed
                 }
+                val saved = result ?: return@forEachIndexed
 
                 // 抖音部分图文是 VVIC/HEIC，相册和电脑都打不开：用抖音内置解码器就地转成 JPEG
-                HeifTranscoder.transcodeInPlace(result)
-                KMediaUtils.notifyMediaUpdate(context, result.absolutePath)
+                HeifTranscoder.transcodeInPlace(saved)
+                KMediaUtils.notifyMediaUpdate(context, saved.absolutePath)
                 downloaded++
             }
             return downloaded > 0
@@ -281,20 +294,25 @@ class DownloadAllUserWorksLogic(
             "Auto" -> item.getAutoVideoUrlList()
             else -> emptyList()
         }
-        val url = urlList.firstOrNull { it.isNotBlank() } ?: run {
+        val candidates = urlList.filter { it.isNotBlank() }.distinct()
+        if (candidates.isEmpty()) {
             XplerLog.d("DownloadAllWorks [$index] 没有可用视频地址, videoCoding=${config.videoCoding}, urls=${urlList.size}")
             return false
         }
 
         val file = DownloadNaming.uniqueFile(videoDir.need(), baseName.secureFilename(".mp4"))
-        val result = downloadFile(url, file, notify, "第${index}个 %s%%")
-        if (result == null) {
+        var result: File? = null
+        for (url in candidates) {
+            val got = downloadFile(url, file, notify, "第${index}个 %s%%")
+            if (got != null) {
+                result = got
+                break
+            }
             file.deleteIfEmpty()
-            return false
         }
-
-        XplerLog.d("DownloadAllWorks [$index] 保存成功: ${result.absolutePath} (${result.length()} bytes)")
-        KMediaUtils.notifyMediaUpdate(context, result.absolutePath)
+        val saved = result ?: return false
+        XplerLog.d("DownloadAllWorks [$index] 保存成功: ${saved.absolutePath} (${saved.length()} bytes)")
+        KMediaUtils.notifyMediaUpdate(context, saved.absolutePath)
         return true
     }
 

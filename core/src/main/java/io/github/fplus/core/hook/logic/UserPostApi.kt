@@ -103,6 +103,12 @@ object UserPostApi {
     private val WEAK_CLASS = "com.ss.android.ugc.aweme.profile.tab.api.PostAwemeRepo\$TabApi"
     private const val WEAK_METHOD = "fetchWeakPostList"
 
+    /** 按 ID 取完整作品的接口，都是 `/aweme/v1/multi/aweme/detail/` */
+    private val DETAIL_SPECS = listOf(
+        "com.ss.android.ugc.aweme.sticker.flash.detail.FlashMobDetailApi" to "getAwemeByIds",
+        "com.ss.android.ugc.aweme.history.HistoryModel\$API" to "getAwemeDetail",
+    )
+
     /** 拿不到 App 真实域名时的兜底，按顺序尝试 */
     private val FALLBACK_HOSTS = listOf(
         "https://aweme.snssdk.com",
@@ -165,7 +171,125 @@ object UserPostApi {
         if (best != null && usable.any { it === best }) ordered.add(best)
         ordered.addAll(usable.filter { it !== best })
 
-        var lastPage: UserPostPage? = null
+        return if (cursor == 0L) {
+            fetchFirstPageMerged(ordered, secUid, uid, count)
+        } else {
+            fetchNextPage(ordered, secUid, uid, cursor, count)
+        }
+    }
+
+    /**
+     * 第一页会把所有可用接口都问一遍再合并。
+     *
+     * 原因：有的接口会过滤掉图文作品（实测 `getPublishAwemeList` 只要视频，作者 3 个作品只返回 2 个），
+     * 只取第一个非空结果就会漏作品。合并后顺便记住哪个接口给的最多，后续翻页就用它。
+     */
+    private suspend fun fetchFirstPageMerged(
+        ordered: List<Endpoint>,
+        secUid: String?,
+        uid: String?,
+        count: Int,
+    ): UserPostPage {
+        val collected = LinkedHashMap<String, Aweme>()
+        var bestEndpoint: Endpoint? = null
+        var bestCount = 0
+        var bestHasMore = false
+        var bestCursor = 0L
+        var lastError: String? = null
+        val counts = ArrayList<String>(ordered.size)
+
+        for (endpoint in ordered) {
+            val values = endpoint.spec.values(secUid, uid, 0L, count)
+            BatchDebug.log("[${endpoint.label}] cursor=0 count=$count params=$values")
+            val page = try {
+                val raw = invoke(endpoint, values, 0L, count)
+                BatchDebug.log("[${endpoint.label}] response=${describe(raw)}")
+                parsePage(raw)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                val cause = e.cause ?: e
+                BatchDebug.log("[${endpoint.label}] 调用失败: ${cause.javaClass.name}: ${cause.message}")
+                XplerLog.e("$TAG 调用失败(${endpoint.label}): ${cause.javaClass.name}: ${cause.message}")
+                lastError = "请求失败: ${cause.javaClass.simpleName} ${cause.message.orEmpty()}".trim()
+                continue
+            }
+
+            counts.add("${endpoint.label}=${page.awemes.size}")
+            if (page.awemes.isEmpty()) {
+                if (page.error != null) lastError = page.error
+                continue
+            }
+
+            page.awemes.forEachIndexed { index, aweme ->
+                val id = aweme.aid.orEmpty()
+                val key = if (id.isNotBlank()) id else "${endpoint.label}#$index"
+                collected.putIfAbsent(key, aweme)
+            }
+            if (page.awemes.size > bestCount) {
+                bestCount = page.awemes.size
+                bestEndpoint = endpoint
+                bestHasMore = page.hasMore
+                bestCursor = page.maxCursor
+            }
+        }
+
+        BatchDebug.log("第一页各接口作品数: " + counts.joinToString())
+        val best = bestEndpoint
+        if (best != null && best.spec.paging) preferred = best
+        if (best != null && collected.size != bestCount) {
+            BatchDebug.log("合并后 ${collected.size} 个作品（单接口最多 $bestCount 个）")
+        }
+
+        // 跟主页实际在用的 weak post 列表对账，补回被某个接口过滤掉的作品（实测图文会被过滤）
+        val weakIds = fetchWeakPostIds(secUid, uid, count)
+        if (weakIds.isNotEmpty()) {
+            val missing = weakIds.filter { it !in collected }
+            BatchDebug.log("weak post 对账: 列表=${weakIds.size}, 已拿到=${collected.size}, 缺少=${missing.size}")
+            if (missing.isNotEmpty()) {
+                fetchAwemesByIds(missing).forEach { aweme ->
+                    val id = aweme.aid.orEmpty()
+                    if (id.isNotBlank()) collected[id] = aweme
+                }
+            }
+        }
+
+        // 有 weak post 时按它的顺序输出，保证和主页一致
+        val merged = if (weakIds.isNotEmpty()) {
+            val weakSet = weakIds.toHashSet()
+            buildList(collected.size) {
+                weakIds.forEach { id -> collected[id]?.let { add(it) } }
+                collected.forEach { (key, value) -> if (key !in weakSet) add(value) }
+            }
+        } else {
+            collected.values.toList()
+        }
+
+        if (merged.isNotEmpty()) {
+            BatchDebug.log(
+                "第一页作品: " + merged.joinToString(", ") { item ->
+                    val kind = if (item.getImageUrlList().isNotEmpty()) "图文" else "视频"
+                    "${item.aid.orEmpty().takeLast(8)}$kind"
+                }
+            )
+            return UserPostPage(
+                awemes = merged,
+                hasMore = best?.let { bestHasMore } ?: false,
+                maxCursor = best?.let { bestCursor } ?: 0L,
+            )
+        }
+
+        return UserPostPage(emptyList(), false, 0L, lastError ?: "接口返回为空")
+    }
+
+    private suspend fun fetchNextPage(
+        ordered: List<Endpoint>,
+        secUid: String?,
+        uid: String?,
+        cursor: Long,
+        count: Int,
+    ): UserPostPage {
+        var lastError: String? = null
         for (endpoint in ordered) {
             val values = endpoint.spec.values(secUid, uid, cursor, count)
             BatchDebug.log("[${endpoint.label}] cursor=$cursor count=$count params=$values")
@@ -178,11 +302,7 @@ object UserPostApi {
             } catch (e: Throwable) {
                 val cause = e.cause ?: e
                 BatchDebug.log("[${endpoint.label}] 调用失败: ${cause.javaClass.name}: ${cause.message}")
-                XplerLog.e("$TAG 调用失败(${endpoint.label}): ${cause.javaClass.name}: ${cause.message}")
-                lastPage = UserPostPage(
-                    emptyList(), false, 0L,
-                    "请求失败: ${cause.javaClass.simpleName} ${cause.message.orEmpty()}".trim(),
-                )
+                lastError = "请求失败: ${cause.javaClass.simpleName} ${cause.message.orEmpty()}".trim()
                 continue
             }
 
@@ -190,16 +310,11 @@ object UserPostApi {
                 if (endpoint.spec.paging) preferred = endpoint
                 return page
             }
-            // 第一页就空：继续换下一个接口；翻页后为空说明已到底，直接返回
+            // 翻页后为空说明已到底
             BatchDebug.log("[${endpoint.label}] 作品为空${page.error?.let { " ($it)" }.orEmpty()}")
-            if (lastPage == null || lastPage.error == null) lastPage = page
-            if (cursor != 0L) return page
+            return page
         }
-
-        // 全部接口都空 -> 探测 weak post，把真实情况写进日志
-        if (cursor == 0L) probeWeakPost(secUid, uid, count)
-
-        return lastPage ?: UserPostPage(emptyList(), false, 0L, "接口返回为空")
+        return UserPostPage(emptyList(), false, 0L, lastError)
     }
 
     /** 主页老接口的参数，按 App 里 `PostAwemeRepo` 的写法拼 */
@@ -211,7 +326,9 @@ object UserPostApi {
     ): Map<String, Any?> {
         val params = linkedMapOf<String, Any?>()
         params["max_cursor"] = cursor.toString()
-        if (!secUid.isNullOrBlank()) params["sec_user_id"] = secUid else if (!uid.isNullOrBlank()) params["user_id"] = uid
+        // 两个 ID 都带上：老接口有时只认 user_id，有时只认 sec_user_id
+        if (!secUid.isNullOrBlank()) params["sec_user_id"] = secUid
+        if (!uid.isNullOrBlank()) params["user_id"] = uid
         params["count"] = count.toString()
         params["publish_video_strategy_type"] = "0"
         params["source"] = "0"
@@ -528,29 +645,88 @@ object UserPostApi {
         return result
     }
 
-    /** 探测 weak post：31.5.0 主页列表走的是它，日志里记录条数便于后续适配 */
-    private fun probeWeakPost(secUid: String?, uid: String?, count: Int) {
-        runCatching {
-            val loader = hostClassLoader()
-            val factory = retrofitFactory(loader) ?: return
-            val clazz = loadClass(WEAK_CLASS, loader) ?: return
-            val method = clazz.declaredMethods.firstOrNull { it.name == WEAK_METHOD } ?: return
-            val host = preferred?.host ?: hostCandidates(loader).firstOrNull() ?: return
-            val retrofit = createRetrofit(factory, host) ?: return
-            val api = createService(retrofit, clazz) ?: return
+    /**
+     * 取 weak post 列表里的作品 ID。
+     *
+     * 31.5.0 主页列表走的是 `/aweme/v1/aweme/weak/post/`，它包含作者的全部作品（含图文），
+     * 只是字段很少（只有 awemeId/desc/点赞/播放）。用它来跟作品列表接口对账，
+     * 能发现被某个接口过滤掉的作品。
+     */
+    private suspend fun fetchWeakPostIds(secUid: String?, uid: String?, count: Int): List<String> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val loader = hostClassLoader()
+                val factory = retrofitFactory(loader) ?: return@runCatching emptyList<String>()
+                val clazz = loadClass(WEAK_CLASS, loader) ?: return@runCatching emptyList()
+                val method = clazz.declaredMethods.firstOrNull { it.name == WEAK_METHOD }
+                    ?: return@runCatching emptyList()
+                val host = preferred?.host ?: hostCandidates(loader).firstOrNull()
+                    ?: return@runCatching emptyList()
+                val retrofit = createRetrofit(factory, host) ?: return@runCatching emptyList()
+                val api = createService(retrofit, clazz) ?: return@runCatching emptyList()
 
-            val params = toStringMap(postParams(secUid, uid, 0L, count))
-            method.isAccessible = true
-            val result = method.invoke(api, params) ?: return
-            val list = awaitResultBlocking(result)
-            val weak = readValue(list ?: return, "weakPostAwemeList", "getWeakPostAwemeList") as? List<*>
-            BatchDebug.log("weak post: ${describe(list)}, weakCount=${weak?.size}")
-            weak?.firstOrNull()?.let { first ->
-                val id = readValue(first, "awemeId", "getAwemeId")
-                BatchDebug.log("weak post firstId=$id")
-            }
-        }.onFailure {
-            BatchDebug.log("weak post 探测失败: ${it.javaClass.simpleName}: ${it.message}")
+                val params = toStringMap(postParams(secUid, uid, 0L, count))
+                method.isAccessible = true
+                val raw = method.invoke(api, params) ?: return@runCatching emptyList()
+                val list = awaitResultBlocking(raw) ?: return@runCatching emptyList()
+                val weak = readValue(list, "weakPostAwemeList", "getWeakPostAwemeList") as? List<*>
+                BatchDebug.log("weak post: ${describe(list)}, weakCount=${weak?.size}")
+                weak.orEmpty()
+                    .mapNotNull { item -> item?.let { readValue(it, "awemeId", "getAwemeId")?.toString() } }
+                    .filter { it.isNotBlank() }
+            }.onFailure {
+                val cause = it.cause ?: it
+                BatchDebug.log("weak post 探测失败: ${cause.javaClass.simpleName}: ${cause.message}")
+            }.getOrDefault(emptyList())
+        }
+
+    /**
+     * 按作品 ID 批量取完整 Aweme（`/aweme/v1/multi/aweme/detail/`）。
+     * 用于补回 weak post 里有、但作品列表接口没返回的作品（例如图文）。
+     */
+    private suspend fun fetchAwemesByIds(ids: List<String>): List<Aweme> {
+        if (ids.isEmpty()) return emptyList()
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val loader = hostClassLoader()
+                val factory = retrofitFactory(loader) ?: return@runCatching emptyList<Aweme>()
+                val host = preferred?.host ?: hostCandidates(loader).firstOrNull()
+                    ?: return@runCatching emptyList()
+                val retrofit = createRetrofit(factory, host) ?: return@runCatching emptyList()
+                val joined = ids.joinToString(",")
+
+                for ((className, methodName) in DETAIL_SPECS) {
+                    val clazz = loadClass(className, loader) ?: continue
+                    val method = clazz.declaredMethods.firstOrNull { it.name == methodName } ?: continue
+                    val api = runCatching { createService(retrofit, clazz) }.getOrNull() ?: continue
+
+                    val items = try {
+                        method.isAccessible = true
+                        val values = mapOf(
+                            "aweme_ids" to joined,
+                            "request_source" to 0,
+                            "location_permission" to 0,
+                        )
+                        val args = buildTypedArgs(method, values, null)
+                        val raw = method.invoke(api, *args) ?: continue
+                        val detail = awaitResultBlocking(raw)
+                        (readValue(detail ?: continue, "items", "getItems") as? List<*>)
+                            ?.filterIsInstance<Aweme>()
+                            .orEmpty()
+                    } catch (e: Throwable) {
+                        val cause = e.cause ?: e
+                        BatchDebug.log("按 ID 取详情失败($className): ${cause.javaClass.simpleName}: ${cause.message}")
+                        continue
+                    }
+
+                    BatchDebug.log("按 ID 取详情($className): 请求 ${ids.size} 个, 返回 ${items.size} 个")
+                    if (items.isNotEmpty()) return@runCatching items
+                }
+                emptyList()
+            }.onFailure {
+                val cause = it.cause ?: it
+                BatchDebug.log("按 ID 取详情异常: ${cause.javaClass.simpleName}: ${cause.message}")
+            }.getOrDefault(emptyList())
         }
     }
 
@@ -564,6 +740,19 @@ object UserPostApi {
         if (implements(result.javaClass, "io.reactivex.Single")) {
             return runCatching { result.javaClass.getMethod("blockingGet").invoke(result) }
                 .getOrElse { throw it.cause ?: it }
+        }
+        // bolts Task（HistoryModel$API#getAwemeDetail）
+        if (implements(result.javaClass, "bolts.Task")) {
+            val task = runCatching { result.javaClass.getMethod("waitForCompletion").invoke(result) }.getOrNull()
+                ?: return null
+            val faulted = runCatching {
+                task.javaClass.getMethod("isFaulted").invoke(task) as Boolean
+            }.getOrDefault(false)
+            if (faulted) {
+                val error = runCatching { task.javaClass.getMethod("getError").invoke(task) }.getOrNull()
+                throw (error as? Throwable) ?: RuntimeException("Task failed")
+            }
+            return runCatching { task.javaClass.getMethod("getResult").invoke(task) }.getOrNull()
         }
         return result
     }
