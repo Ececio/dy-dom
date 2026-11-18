@@ -39,7 +39,6 @@ class DownloadLogic(
     }
 
     private lateinit var mShortId: String
-    private lateinit var mPureNickname: String
     private lateinit var mOwnerDir: String
 
     private lateinit var mVideoParent: File
@@ -52,15 +51,10 @@ class DownloadLogic(
             if (aweme != null) {
                 // 整理内容
                 // 如果uniqueId为空, shortId为账号
-                mShortId = if (aweme.author.uniqueId.isNullOrEmpty()) {
-                    aweme.author.shortId
-                } else {
-                    aweme.author.uniqueId
-                }
-                mPureNickname = aweme.author.nickname.pureFileName
+                mShortId = DownloadNaming.shortId(aweme.author.uniqueId, aweme.author.shortId)
 
                 // mOwnerDir: 如果需要按视频创作者单独创建文件夹: `/外置存储器/Download/Freedom/${video|music|picture}/昵称(账号)`
-                mOwnerDir = if (config.ownerDir) "${mPureNickname}(${mShortId})" else ""
+                mOwnerDir = DownloadNaming.ownerDir(aweme.author.nickname, mShortId)
 
                 // 默认下载路径: `/外置存储器/Download/Freedom/video`
                 mVideoParent = ConfigV1.getFreedomDir(context).child("video")
@@ -72,11 +66,7 @@ class DownloadLogic(
                 mImageParent = ConfigV1.getFreedomDir(context).child("picture")
 
                 // 构建文件名
-                mPureFileName = if (aweme.desc.isNullOrBlank()) {
-                    "${mPureNickname}_${mShortId}_${System.currentTimeMillis() / 1000}"
-                } else {
-                    "${mPureNickname}_${mShortId}_${aweme.desc.pureFileName}"
-                }
+                mPureFileName = DownloadNaming.fileName(aweme.author.nickname, mShortId, aweme.author.uid, aweme.desc)
                 showChoiceDialog(aweme)
             } else {
                 hook.showToast(context, "未获取到基本信息")

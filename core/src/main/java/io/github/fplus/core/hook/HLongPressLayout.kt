@@ -24,6 +24,7 @@ import com.ss.android.ugc.aweme.feed.ui.PenetrateTouchRelativeLayout
 import io.github.fplus.core.base.BaseHook
 import io.github.fplus.core.config.ConfigV1
 import io.github.fplus.core.helper.DexkitBuilder
+import io.github.fplus.core.hook.logic.DownloadAllUserWorksLogic
 import io.github.fplus.core.hook.logic.DownloadLogic
 import io.github.fplus.core.hook.logic.authorInfoText
 import io.github.fplus.core.hook.logic.videoInfoText
@@ -163,6 +164,7 @@ class HLongPressLayout : BaseHook() {
 
         if (config.isDownload) {
             items.add("下载")
+            items.add("下载所有作品")
         }
 
         items.add("获取作者信息")
@@ -209,6 +211,14 @@ class HLongPressLayout : BaseHook() {
                     context = view.context,
                     aweme = aweme,
                 )
+            }
+
+            "下载所有作品" -> {
+                DownloadAllUserWorksLogic(
+                    hook = this@HLongPressLayout,
+                    context = view.context,
+                    aweme = aweme,
+                ).start()
             }
 
             "获取作者信息" -> {
