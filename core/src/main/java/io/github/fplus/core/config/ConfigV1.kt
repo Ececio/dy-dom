@@ -103,6 +103,17 @@ class ConfigV1 private constructor() {
             field = value
         }
 
+    /// 最高画质优先(读取 video.bitRate 选最高码率档位)
+    var isBestQuality: Boolean = true
+        get() {
+            field = mmkv.getBoolean("isBestQuality", true)
+            return field
+        }
+        set(value) {
+            mmkv.putBoolean("isBestQuality", value)
+            field = value
+        }
+
     /// 表情包/评论区视频、图片保存
     var isEmojiDownload: Boolean = false
         get() {

@@ -404,6 +404,14 @@ class FreedomSettingActivity : XplerActivity() {
 
                     Divider()
 
+                    CheckBoxItem(
+                        text = "最高画质优先",
+                        checked = model.isBestQuality.observeAsState(true),
+                        onCheckedChange = {
+                            model.changeIsBestQuality(it)
+                        }
+                    )
+
                     Box {
                         val menus by remember { mutableStateOf(listOf("Auto", "H264", "H265")) }
                         val videoCoding by model.videoCoding.observeAsState("Auto")

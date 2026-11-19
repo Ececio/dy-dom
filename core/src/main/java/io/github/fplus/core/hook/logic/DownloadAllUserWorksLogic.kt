@@ -298,15 +298,13 @@ class DownloadAllUserWorksLogic(
             return downloaded > 0
         }
 
-        val urlList = when (config.videoCoding) {
-            "H265" -> item.getH265VideoUrlList()
-            "H264" -> item.getH264VideoUrlList()
-            "Auto" -> item.getAutoVideoUrlList()
-            else -> emptyList()
-        }
-        val candidates = urlList.filter { it.isNotBlank() }.distinct()
+        val candidates = item.getVideoUrlCandidates(config.videoCoding, config.isBestQuality)
+        XplerLog.d(
+            "DownloadAllWorks [$index] ${item.videoQualityInfo(config.videoCoding, config.isBestQuality)}, " +
+                    "candidates=${candidates.size}"
+        )
         if (candidates.isEmpty()) {
-            XplerLog.d("DownloadAllWorks [$index] 没有可用视频地址, videoCoding=${config.videoCoding}, urls=${urlList.size}")
+            XplerLog.d("DownloadAllWorks [$index] 没有可用视频地址, videoCoding=${config.videoCoding}")
             return false
         }
 

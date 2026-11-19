@@ -46,6 +46,9 @@ class FreedomSettingVM(application: Application) : AndroidViewModel(application)
     private var _videoCoding = MutableLiveData("")
     val videoCoding: LiveData<String> = _videoCoding
 
+    private var _isBestQuality = MutableLiveData(true)
+    val isBestQuality: LiveData<Boolean> = _isBestQuality
+
     private var _isEmojiDownload = MutableLiveData(false)
     val isEmoji: LiveData<Boolean> = _isEmojiDownload
 
@@ -207,6 +210,7 @@ class FreedomSettingVM(application: Application) : AndroidViewModel(application)
             setNotificationDownload(config.notificationDownload)
             setCopyLinkDownload(config.copyLinkDownload)
             setVideoCoding(config.videoCoding)
+            changeIsBestQuality(config.isBestQuality)
             changeIsEmojiDownload(config.isEmojiDownload)
             setVibrate(config.vibrate)
             changeIsTranslucent(config.isTranslucent)
@@ -283,6 +287,12 @@ class FreedomSettingVM(application: Application) : AndroidViewModel(application)
     fun setVideoCoding(value: String) {
         _videoCoding.value = value
         config.videoCoding = value
+    }
+
+    // 最高画质优先
+    fun changeIsBestQuality(value: Boolean) {
+        _isBestQuality.value = value
+        config.isBestQuality = value
     }
 
     // 表情包保存

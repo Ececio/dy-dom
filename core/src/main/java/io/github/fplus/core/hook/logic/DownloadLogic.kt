@@ -141,12 +141,11 @@ class DownloadLogic(
      * @param aweme
      */
     private fun downloadVideo(aweme: Aweme, isWebDav: Boolean = false) {
-        val videoUrlList = when (config.videoCoding) {
-            "H265" -> aweme.getH265VideoUrlList()
-            "H264" -> aweme.getH264VideoUrlList()
-            "Auto" -> aweme.getAutoVideoUrlList()
-            else -> emptyList()
-        }
+        val videoUrlList = aweme.getVideoUrlCandidates(config.videoCoding, config.isBestQuality)
+        XplerLog.d(
+            "Download ${aweme.videoQualityInfo(config.videoCoding, config.isBestQuality)}, " +
+                    "candidates=${videoUrlList.size}"
+        )
 
         if (videoUrlList.isEmpty()) {
             hook.showToast(context, "未获取到视频信息")
@@ -341,12 +340,18 @@ class DownloadLogic(
             listener = {
                 // 下载逻辑
                 hook.singleLaunchIO(pureFileName) {
-                    val resultFile = downloadFile(
-                        url = urlList.first(),
-                        downloadFile = File(parentPath.need(), pureFileName),
-                        notify = it,
-                        progressText = "下载中 %s%%",
-                    )
+                    val file = File(parentPath.need(), pureFileName)
+                    var resultFile: File? = null
+                    for (url in urlList) {
+                        resultFile = downloadFile(
+                            url = url,
+                            downloadFile = file,
+                            notify = it,
+                            progressText = "下载中 %s%%",
+                        )
+                        if (resultFile != null) break
+                        file.deleteIfEmpty()
+                    }
                     if (resultFile != null) {
                         val message = if (isWebDav) "下载成功, 正在上传WebDav!" else "下载成功!"
                         it.setFinishedText(message)
@@ -382,12 +387,18 @@ class DownloadLogic(
             listener = { dismiss, notify ->
                 // 下载逻辑
                 hook.singleLaunchIO(pureFileName) {
-                    val resultFile = downloadFile(
-                        url = urlList.first(),
-                        downloadFile = File(parentPath.need(), pureFileName),
-                        notify = notify,
-                        progressText = "%s%%",
-                    )
+                    val file = File(parentPath.need(), pureFileName)
+                    var resultFile: File? = null
+                    for (url in urlList) {
+                        resultFile = downloadFile(
+                            url = url,
+                            downloadFile = file,
+                            notify = notify,
+                            progressText = "%s%%",
+                        )
+                        if (resultFile != null) break
+                        file.deleteIfEmpty()
+                    }
                     if (resultFile != null) {
                         hook.refresh { dismiss.invoke() }
                         val message = if (isWebDav) "下载成功, 正在上传WebDav!" else "下载成功!"
@@ -450,4 +461,9 @@ class DownloadLogic(
             false
         }
     }
+}
+
+/** 下载失败可能在磁盘上留下 0 字节文件，清理掉再试下一个地址 */
+private fun File.deleteIfEmpty() {
+    if (exists() && length() <= 0L) delete()
 }

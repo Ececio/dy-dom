@@ -668,6 +668,69 @@ fun Aweme.getAutoVideoUrlList(): List<String> {
     return video.playAddr?.urlList ?: emptyList()
 }
 
+/** 按编码类型取播放地址(不含清晰度排序) */
+fun Aweme.getVideoUrlList(coding: String): List<String> {
+    return when (coding) {
+        "H265" -> getH265VideoUrlList()
+        "H264" -> getH264VideoUrlList()
+        else -> getAutoVideoUrlList()
+    }
+}
+
+/**
+ * 视频候选地址，按清晰度从高到低排序。
+ *
+ * 抖音把不同清晰度档位放在 `video.bitRate[]`（gearName/bitRate/playAddr/playAddr265）里，
+ * 播放器使用的 `video.playAddr` 只是其中一个档位，不一定是最高档。
+ * best=true 时先按码率从高到低取各档位地址，末尾再补上默认地址兜底，
+ * 这样某个档位地址失效或缺少 H265 时不会直接下载失败。
+ */
+fun Aweme.getVideoUrlCandidates(coding: String, best: Boolean): List<String> {
+    val video = video ?: return emptyList()
+    val result = LinkedHashSet<String>()
+
+    if (best) {
+        val gears = video.bitRate.orEmpty().sortedByDescending { it.bitRate }
+        for (gear in gears) {
+            val urls = when (coding) {
+                "H265" -> gear.playAddr265?.urlList
+                    ?: gear.playAddr?.urlList?.takeIf { gear.isH265 == 1 }
+
+                "H264" -> gear.playAddr?.urlList?.takeIf { gear.isH265 != 1 }
+
+                else -> gear.playAddr?.urlList ?: gear.playAddr265?.urlList
+            }
+            urls.orEmpty().filterTo(result) { it.isNotBlank() }
+        }
+    }
+
+    // 兜底: 先默认档, 再其他编码, 保证有地址可用
+    result.addAll(getVideoUrlList(coding).filter { it.isNotBlank() })
+    result.addAll(getAutoVideoUrlList().filter { it.isNotBlank() })
+    result.addAll(getH265VideoUrlList().filter { it.isNotBlank() })
+    result.addAll(getH264VideoUrlList().filter { it.isNotBlank() })
+    return result.toList()
+}
+
+/** 清晰度信息，用于日志确认是否拿到了最高档位 */
+fun Aweme.videoQualityInfo(coding: String, best: Boolean): String {
+    val video = video ?: return "video=null"
+    val gears = video.bitRate.orEmpty()
+    val top = gears.sortedByDescending { gear -> gear.bitRate }.firstOrNull()
+    return buildString {
+        append("coding=").append(coding)
+        append(", best=").append(best)
+        append(", size=").append(video.width).append("x").append(video.height)
+        append(", gears=").append(gears.size)
+        if (top != null) {
+            append(", topGear=").append(top.gearName)
+            append("(").append(top.bitRate).append("bps")
+            append(", type=").append(top.qualityType)
+            append(", h265=").append(top.isH265).append(")")
+        }
+    }
+}
+
 fun Aweme.getImageUrlList(): List<ImageUrlStruct> {
     return images ?: return emptyList()
 }

@@ -2,6 +2,8 @@ package com.ss.android.ugc.aweme.feed.model;
 
 import com.ss.android.ugc.aweme.base.model.UrlModel;
 
+import java.util.List;
+
 public class Video {
 
     public UrlModel aicover;
@@ -23,6 +25,8 @@ public class Video {
     public UrlModel playAddrBytevc1;
 
     public UrlModel playAddrLowbr;
+
+    public List<BitRate> bitRate;
 
     public String playAuthToken;
 
