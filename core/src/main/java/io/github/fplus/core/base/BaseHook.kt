@@ -16,14 +16,15 @@ import android.os.VibratorManager
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
+import android.view.ViewGroup
 import android.view.Window
 import android.view.WindowManager
 import android.widget.ProgressBar
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.annotation.DrawableRes
 import androidx.appcompat.content.res.AppCompatResources
 import androidx.compose.runtime.Composable
-import androidx.core.view.doOnLayout
 import androidx.core.view.isVisible
 import com.freegang.extension.isDarkMode
 import com.freegang.ktutils.app.IProgressNotification
@@ -252,13 +253,6 @@ abstract class BaseHook : HookEntity() {
         binding.messageDialogTitle.setTextColor(getTextColor(isDarkMode))
         binding.messageDialogContent.text = content
         binding.messageDialogContent.setTextColor(getTextColor(isDarkMode))
-        // 字段很多时（如作者信息）限制弹窗内容高度，超出部分可滚动
-        binding.messageDialogScroll.doOnLayout { scroll ->
-            val maxHeight = (context.resources.displayMetrics.heightPixels * 0.62f).toInt()
-            if (scroll.height > maxHeight) {
-                scroll.layoutParams = scroll.layoutParams.apply { height = maxHeight }
-            }
-        }
         binding.messageDialogCancel.text = cancel
         binding.messageDialogCancel.setTextColor(getTextColor(isDarkMode))
         binding.messageDialogConfirm.text = confirm
@@ -289,6 +283,28 @@ abstract class BaseHook : HookEntity() {
                 view = binding.root,
                 onDismiss = onDismiss,
             )
+        }
+        // 字段很多时（如作者/直播间信息）限制内容高度，按钮才不会被挤出屏幕
+        clampScrollHeight(context, binding.messageDialogScroll, binding.messageDialogContent)
+    }
+
+    /**
+     * 内容过高时限制 ScrollView 高度，让底部按钮保持可见。
+     * 必须在窗口显示后调用，此时子 View 才完成测量。
+     */
+    private fun clampScrollHeight(
+        context: Context,
+        scroll: ScrollView,
+        content: View,
+        ratio: Float = 0.55f,
+    ) {
+        scroll.post {
+            val maxHeight = (context.resources.displayMetrics.heightPixels * ratio).toInt()
+            val contentHeight = content.height + scroll.paddingTop + scroll.paddingBottom
+            val target = if (contentHeight > maxHeight) maxHeight else ViewGroup.LayoutParams.WRAP_CONTENT
+            if (scroll.layoutParams?.height != target) {
+                scroll.layoutParams = scroll.layoutParams.apply { height = target }
+            }
         }
     }
 

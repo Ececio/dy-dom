@@ -592,6 +592,8 @@ class FreedomSettingVM(application: Application) : AndroidViewModel(application)
 
     // 保存版本信息
     fun setVersionConfig(asset: AssetManager?) {
+        // 配置异步加载, 页面可能在加载完成前就进入 onPause
+        if (!::config.isInitialized) return
         if (asset == null) {
             config.versionConfig = config.versionConfig.copy(
                 dyVersionName = app.appVersionName,
