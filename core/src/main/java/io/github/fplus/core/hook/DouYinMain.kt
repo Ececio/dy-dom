@@ -61,6 +61,7 @@ class DouYinMain(private val app: Application) {
                     HPhoneWindow()
                     HActivity()
                     HLiveLongPress()
+                    HLiveLongPressMenu()
                     HMainActivity()
                     HDetailActivity()
                     HLandscapeFeedActivity()

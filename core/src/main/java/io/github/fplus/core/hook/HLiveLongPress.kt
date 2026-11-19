@@ -23,6 +23,24 @@ import kotlin.math.abs
  * 因此这里 hook android.app.Activity#dispatchTouchEvent，在 before 中观察事件，不消费事件。
  */
 class HLiveLongPress : BaseHook() {
+    companion object {
+        @Volatile
+        private var menuDownY = -1f
+
+        @Volatile
+        private var menuDownActivity: Activity? = null
+
+        /**
+         * 上一次按下是否落在直播间上半部分。
+         * 用于屏蔽抖音自带的直播长按菜单，只显示模块自己的窗口。
+         */
+        fun shouldBlockNativeMenu(): Boolean {
+            return ConfigV1.get().isLongPressLive &&
+                    menuDownActivity is LivePlayActivity &&
+                    menuDownY >= 0f && menuDownY < screenSize.height / 2f
+        }
+    }
+
     private val config get() = ConfigV1.get()
 
     private val longPressTimeout = ViewConfiguration.getLongPressTimeout().toLong()
@@ -55,6 +73,10 @@ class HLiveLongPress : BaseHook() {
 
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    // 记录按下位置, 用于屏蔽抖音自带的直播长按菜单
+                    menuDownY = event.y
+                    menuDownActivity = activity
+
                     // 只有上半部分生效
                     if (event.y > screenSize.height / 2f) return@hookBlockRunning
 
