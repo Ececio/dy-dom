@@ -142,6 +142,9 @@ class FreedomSettingVM(application: Application) : AndroidViewModel(application)
     private var _longPressMode = MutableLiveData(false)
     val longPressMode: LiveData<Boolean> = _longPressMode
 
+    private var _isLongPressLive = MutableLiveData(false)
+    val isLongPressLive: LiveData<Boolean> = _isLongPressLive
+
     private var _isCommentColorMode = MutableLiveData(false)
     val isCommentColorMode: LiveData<Boolean> = _isCommentColorMode
 
@@ -222,6 +225,7 @@ class FreedomSettingVM(application: Application) : AndroidViewModel(application)
             setAddAutoPlayButton(config.addAutoPlayButton)
             setDefaultAutoPlay(config.defaultAutoPlay)
             changeIsImmersive(config.isImmersive)
+            changeIsLongPressLive(config.isLongPressLive)
             setSystemControllerValue(config.systemControllerValue)
             changeIsCommentColorMode(config.isCommentColorMode)
             changeCommentColorMode(config.commentColorMode)
@@ -467,6 +471,12 @@ class FreedomSettingVM(application: Application) : AndroidViewModel(application)
     fun setLongPressMode(value: Boolean) {
         _longPressMode.value = value
         config.longPressMode = value
+    }
+
+    // 长按直播上半部分
+    fun changeIsLongPressLive(value: Boolean) {
+        _isLongPressLive.value = value
+        config.isLongPressLive = value
     }
 
     // 评论区颜色模式

@@ -1,0 +1,145 @@
+package io.github.fplus.core.hook
+
+import android.app.Activity
+import android.content.Intent
+import android.os.SystemClock
+import android.view.MotionEvent
+import android.view.ViewConfiguration
+import com.freegang.extension.screenSize
+import com.ss.android.ugc.aweme.live.LivePlayActivity
+import io.github.fplus.core.base.BaseHook
+import io.github.fplus.core.config.ConfigV1
+import io.github.fplus.core.hook.logic.LiveRoomInfo
+import io.github.fplus.core.ui.activity.FreedomSettingActivity
+import io.github.xpler.core.XplerLog
+import io.github.xpler.core.hookBlockRunning
+import io.github.xpler.core.proxy.MethodParam
+import kotlin.math.abs
+
+/**
+ * 直播长按（参考长按视频）。
+ *
+ * LivePlayActivity 整条继承链都没有重写 dispatchTouchEvent，实际走 Activity 的实现，
+ * 因此这里 hook android.app.Activity#dispatchTouchEvent，在 before 中观察事件，不消费事件。
+ */
+class HLiveLongPress : BaseHook() {
+    private val config get() = ConfigV1.get()
+
+    private val longPressTimeout = ViewConfiguration.getLongPressTimeout().toLong()
+
+    private var downX = 0f
+    private var downY = 0f
+    private var downTime = 0L
+    private var downActivity: Activity? = null
+    private var longPressRunnable: Runnable? = null
+    private var lastShowTime = 0L
+
+    override fun setTargetClass(): Class<*> {
+        return Activity::class.java
+    }
+
+    @OnBefore("dispatchTouchEvent")
+    fun dispatchTouchEventBefore(params: MethodParam, event: MotionEvent) {
+        hookBlockRunning(params) {
+            val activity = thisObject as? Activity ?: return@hookBlockRunning
+
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                cancelLongPress()
+            }
+
+            if (activity !is LivePlayActivity) return@hookBlockRunning
+            if (!config.isLongPressLive) return@hookBlockRunning
+
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    // 只有上半部分生效
+                    if (event.y > screenSize.height / 2f) return@hookBlockRunning
+
+                    downX = event.x
+                    downY = event.y
+                    downTime = SystemClock.uptimeMillis()
+                    downActivity = activity
+
+                    val runnable = Runnable { onLongPress() }
+                    longPressRunnable = runnable
+                    handler.postDelayed(runnable, longPressTimeout)
+                }
+
+                MotionEvent.ACTION_MOVE -> {
+                    if (abs(event.x - downX) > 20f || abs(event.y - downY) > 20f) {
+                        cancelLongPress()
+                    }
+                }
+
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    cancelLongPress()
+                }
+            }
+        }.onFailure {
+            XplerLog.e(it)
+        }
+    }
+
+    private fun cancelLongPress() {
+        longPressRunnable?.let { handler.removeCallbacks(it) }
+        longPressRunnable = null
+        downActivity = null
+    }
+
+    private fun onLongPress() {
+        longPressRunnable = null
+        val activity = downActivity ?: return
+        downActivity = null
+
+        if (!config.isLongPressLive) return
+        if (activity.isFinishing || activity.isDestroyed) return
+
+        // 长按判定已被其它逻辑消费或耗时不足时忽略
+        if (SystemClock.uptimeMillis() - downTime < longPressTimeout - 50L) return
+
+        // 弹窗本身不接收 Activity 的触摸，这里仅防止极短时间内重复弹出
+        val now = SystemClock.uptimeMillis()
+        if (now - lastShowTime < 500L) return
+        lastShowTime = now
+
+        showOptionsMenu(activity)
+    }
+
+    private fun showOptionsMenu(activity: Activity) {
+        val items = mutableListOf("直播间信息")
+        if (!config.isDisablePlugin) {
+            items.add("模块设置")
+        }
+
+        showChoiceDialog(
+            context = activity,
+            title = "Freedom+",
+            items = items.toTypedArray(),
+            onChoice = { _, item, _ ->
+                onChoiceSelected(activity, item)
+            }
+        )
+    }
+
+    private fun onChoiceSelected(activity: Activity, item: CharSequence) {
+        when (item) {
+            "直播间信息" -> {
+                singleLaunchMain("liveRoomInfo") {
+                    val msg = LiveRoomInfo.format(activity.classLoader)
+                    showMessageDialog(
+                        context = activity,
+                        title = "直播间信息",
+                        content = msg,
+                        copyText = msg,
+                        singleButton = true,
+                    )
+                }
+            }
+
+            "模块设置" -> {
+                val intent = Intent().setClass(activity, FreedomSettingActivity::class.java)
+                activity.startActivity(intent)
+            }
+        }
+    }
+}

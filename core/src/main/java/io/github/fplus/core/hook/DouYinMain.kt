@@ -60,6 +60,7 @@ class DouYinMain(private val app: Application) {
                 searchBefore = {
                     HPhoneWindow()
                     HActivity()
+                    HLiveLongPress()
                     HMainActivity()
                     HDetailActivity()
                     HLandscapeFeedActivity()

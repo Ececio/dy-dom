@@ -290,6 +290,7 @@ class FreedomSettingActivity : XplerActivity() {
             item { NeatModeItem() }
             item { AutoPlayItem() }
             item { ImmersiveItem() }
+            item { LongPressLiveItem() }
             item { CommentColorModeItem() }
             item { WebDavItem() }
             item { TimedExitItem() }
@@ -1409,6 +1410,18 @@ class FreedomSettingActivity : XplerActivity() {
                 }
             }
         }
+    }
+
+    @Composable
+    private fun LongPressLiveItem() {
+        SwitchItem(
+            text = "长按直播上半部分",
+            subtext = "长按直播间上半部分弹出菜单, 可查看当前直播间信息",
+            checked = model.isLongPressLive.observeAsState(false),
+            onCheckedChange = {
+                model.changeIsLongPressLive(it)
+            }
+        )
     }
 
     @Composable

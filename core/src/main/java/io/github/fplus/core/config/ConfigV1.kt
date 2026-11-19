@@ -413,6 +413,17 @@ class ConfigV1 private constructor() {
             field = value
         }
 
+    /// 长按直播上半部分(弹出直播间菜单)
+    var isLongPressLive: Boolean = false
+        get() {
+            field = mmkv.getBoolean("isLongPressLive", false)
+            return field
+        }
+        set(value) {
+            mmkv.putBoolean("isLongPressLive", value)
+            field = value
+        }
+
     /// 移除悬浮挑战/评论贴纸
     var isRemoveSticker: Boolean = false
         get() {
