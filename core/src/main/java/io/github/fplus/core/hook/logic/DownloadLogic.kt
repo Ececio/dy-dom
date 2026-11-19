@@ -341,9 +341,8 @@ class DownloadLogic(
                 // 下载逻辑
                 hook.singleLaunchIO(pureFileName) {
                     val file = File(parentPath.need(), pureFileName)
-                    // 先探测编码：抖音有些作品只给 ByteVC 流，系统播放器解不了（有声音没画面）
-                    val picked = VideoCodec.pick(urlList)
-                    val done = VideoCodec.downloadBest(picked) { url ->
+                    // 先下最清晰的那个，再读文件头判断编码；不是通用编码才去换候选
+                    val done = VideoCodec.downloadBest(urlList) { url ->
                         downloadFile(
                             url = url,
                             downloadFile = file,
@@ -394,9 +393,8 @@ class DownloadLogic(
                 // 下载逻辑
                 hook.singleLaunchIO(pureFileName) {
                     val file = File(parentPath.need(), pureFileName)
-                    // 先探测编码：抖音有些作品只给 ByteVC 流，系统播放器解不了（有声音没画面）
-                    val picked = VideoCodec.pick(urlList)
-                    val done = VideoCodec.downloadBest(picked) { url ->
+                    // 先下最清晰的那个，再读文件头判断编码；不是通用编码才去换候选
+                    val done = VideoCodec.downloadBest(urlList) { url ->
                         downloadFile(
                             url = url,
                             downloadFile = file,
@@ -447,8 +445,10 @@ class DownloadLogic(
                 sourceUrl = url,
                 file = downloadFile,
             ) { real, total, e ->
-                if (e != null)
+                if (e != null) {
                     XplerLog.e(e)
+                    BatchDebug.codec("download error ${e.javaClass.simpleName}: ${e.message}")
+                }
 
                 if (notify is KNotifiUtils.ProgressNotification) { // 通知栏在ui线程中刷新会造成ui卡顿, 排查了一下午, 麻了
                     notify.notifyProgress((real * 100 / total).toInt(), progressText)

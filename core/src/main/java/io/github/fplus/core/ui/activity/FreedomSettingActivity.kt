@@ -1450,7 +1450,7 @@ class FreedomSettingActivity : XplerActivity() {
     private fun BatchDebugLogItem() {
         SwitchItem(
             text = "下载调试日志",
-            subtext = "记录「下载所有作品」的调试信息到 Download/Freedom/batch_debug.log, 默认关闭",
+            subtext = "记录「下载所有作品」的调试信息到 Download/Freedom/batch_debug.log, 视频编码探测写入 video_codec.log, 默认关闭",
             checked = model.isBatchDebugLog.observeAsState(false),
             onCheckedChange = {
                 model.changeIsBatchDebugLog(it)

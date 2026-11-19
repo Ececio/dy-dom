@@ -316,9 +316,8 @@ class DownloadAllUserWorksLogic(
         }
 
         val file = DownloadNaming.uniqueFile(videoDir.need(), baseName.secureFilename(".mp4"))
-        // 先探测编码：抖音有些作品只给 ByteVC 流，系统播放器解不了（有声音没画面）
-        val picked = VideoCodec.pick(candidates)
-        val done = VideoCodec.downloadBest(picked) { url ->
+        // 先下最清晰的那个，再读文件头判断编码；不是通用编码才去换候选
+        val done = VideoCodec.downloadBest(candidates) { url ->
             downloadFile(url, file, notify, "第${index}个 %s%%") ?: run {
                 file.deleteIfEmpty()
                 null
@@ -342,7 +341,10 @@ class DownloadAllUserWorksLogic(
             sourceUrl = url,
             file = file,
         ) { real, total, e ->
-            if (e != null) XplerLog.e(e)
+            if (e != null) {
+                XplerLog.e(e)
+                BatchDebug.codec("download error ${e.javaClass.simpleName}: ${e.message}")
+            }
             if (total > 0) {
                 val step = (real * 100 / total).toInt().coerceIn(0, 100)
                 if (notify is KNotifiUtils.ProgressNotification) {
