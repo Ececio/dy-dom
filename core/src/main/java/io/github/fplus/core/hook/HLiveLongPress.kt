@@ -120,7 +120,9 @@ class HLiveLongPress : BaseHook() {
             items = items.toTypedArray(),
             onChoice = { _, item, _ ->
                 onChoiceSelected(activity, item)
-            }
+            },
+            // 直播间自身的长按菜单是 Dialog 窗口，PopupWindow 压不住它，这里改用 Dialog
+            windowMode = true,
         )
     }
 
@@ -135,6 +137,7 @@ class HLiveLongPress : BaseHook() {
                         content = msg,
                         copyText = msg,
                         singleButton = true,
+                        windowMode = true,
                     )
                 }
             }

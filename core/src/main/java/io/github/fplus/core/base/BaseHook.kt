@@ -1,5 +1,6 @@
 package io.github.fplus.core.base
 
+import android.app.Dialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -12,8 +13,11 @@ import android.os.Handler
 import android.os.Looper
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
+import android.view.Window
+import android.view.WindowManager
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.annotation.DrawableRes
@@ -139,6 +143,28 @@ abstract class BaseHook : HookEntity() {
         popupDialog!!.setOnDismissListener { onDismiss.invoke() }
     }
 
+    /**
+     * 使用真正的 Dialog 窗口显示内容。
+     *
+     * PopupWindow 是附加在 Activity 窗口上的子窗口，层级低于系统/App 的 Dialog；
+     * 某些场景（例如直播间长按，抖音自己会弹一个 Dialog 菜单）需要跑到它上面时，
+     * 只能使用 Dialog 窗口。
+     */
+    private fun createWindowDialog(context: Context, view: View): Dialog {
+        val dialog = Dialog(context)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.setContentView(view)
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setLayout(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+            )
+            setGravity(Gravity.CENTER)
+        }
+        return dialog
+    }
+
     @Synchronized
     fun showComposeDialog(
         context: Context,
@@ -169,6 +195,7 @@ abstract class BaseHook : HookEntity() {
         onConfirm: () -> Unit = {},
         onCancel: () -> Unit = {},
         onDismiss: () -> Unit = {},
+        windowMode: Boolean = false,
     ) {
         injectRes(context.resources)
         val isDarkMode = context.isDarkMode
@@ -243,19 +270,26 @@ abstract class BaseHook : HookEntity() {
                 showToast(context, "已复制")
             }
         }
+        val windowDialog = if (windowMode) createWindowDialog(context, binding.root) else null
+
         binding.messageDialogCancel.setOnClickListener {
-            popupDialog!!.dismiss()
+            windowDialog?.dismiss() ?: popupDialog!!.dismiss()
             onCancel.invoke()
         }
         binding.messageDialogConfirm.setOnClickListener {
-            popupDialog!!.dismiss()
+            windowDialog?.dismiss() ?: popupDialog!!.dismiss()
             onConfirm.invoke()
         }
 
-        showDialog(
-            view = binding.root,
-            onDismiss = onDismiss,
-        )
+        if (windowDialog != null) {
+            windowDialog.setOnDismissListener { onDismiss.invoke() }
+            windowDialog.show()
+        } else {
+            showDialog(
+                view = binding.root,
+                onDismiss = onDismiss,
+            )
+        }
     }
 
     fun showProgressDialog(
@@ -393,6 +427,7 @@ abstract class BaseHook : HookEntity() {
         cancel: CharSequence = "取消",
         onChoice: (view: View, item: CharSequence, position: Int) -> Unit,
         onCancel: () -> Unit = {},
+        windowMode: Boolean = false,
     ) {
         injectRes(context.resources)
         val isDarkMode = context.isDarkMode
@@ -415,9 +450,11 @@ abstract class BaseHook : HookEntity() {
         binding.choiceDialogTitle.text = title
         binding.choiceDialogTitle.setTextColor(getTextColor(isDarkMode))
 
+        val windowDialog = if (windowMode) createWindowDialog(context, binding.root) else null
+
         binding.choiceDialogCancel.text = cancel
         binding.choiceDialogCancel.setOnClickListener {
-            popupDialog!!.dismiss()
+            windowDialog?.dismiss() ?: popupDialog!!.dismiss()
             onCancel.invoke()
         }
 
@@ -430,7 +467,7 @@ abstract class BaseHook : HookEntity() {
             R.drawable.item_selector_background,
         )
         binding.choiceDialogList.setOnItemClickListener { _, view, position, _ ->
-            popupDialog!!.dismiss()
+            windowDialog?.dismiss() ?: popupDialog!!.dismiss()
             onChoice.invoke(
                 view,
                 items[position],
@@ -438,7 +475,11 @@ abstract class BaseHook : HookEntity() {
             )
         }
 
-        showDialog(binding.root)
+        if (windowDialog != null) {
+            windowDialog.show()
+        } else {
+            showDialog(binding.root)
+        }
     }
 
     private fun getHintTextColor(isDarkMode: Boolean): Int {
