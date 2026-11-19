@@ -37,6 +37,11 @@ object BatchDebug {
     fun reset(context: Context) {
         synchronized(lock) {
             memory.clear()
+            // 未开启调试日志: 不建文件不写内存
+            if (!ConfigV1.get().isBatchDebugLog) {
+                file = null
+                return
+            }
             file = runCatching {
                 val dir = ConfigV1.getFreedomDir(context)
                 if (!dir.exists()) dir.mkdirs()
@@ -52,6 +57,7 @@ object BatchDebug {
     }
 
     fun log(message: String) {
+        if (!ConfigV1.get().isBatchDebugLog) return
         val line = timeFormat.format(Date()) + " " + message
         synchronized(lock) {
             memory.addLast(line)
@@ -77,6 +83,8 @@ object BatchDebug {
      * 超出 [MAX_TAP_BYTES] 时只裁掉前半部分，保证最新的调用还在。
      */
     fun tap(message: String) {
+        // 未开启网络抓包日志: 不建文件不写内存
+        if (!ConfigV1.get().isNetTapLog) return
         val line = timeFormat.format(Date()) + " " + message
         synchronized(lock) {
             val target = tapFile ?: openTapFile() ?: return
@@ -90,7 +98,10 @@ object BatchDebug {
         }
     }
 
-    fun tapPath(): String = tapFile?.absolutePath.orEmpty()
+    fun tapPath(): String {
+        if (!ConfigV1.get().isNetTapLog) return ""
+        return tapFile?.absolutePath.orEmpty()
+    }
 
     private fun openTapFile(): File? {
         val context = currentApplication() ?: return null

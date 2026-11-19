@@ -294,6 +294,8 @@ class FreedomSettingActivity : XplerActivity() {
             item { CommentColorModeItem() }
             item { WebDavItem() }
             item { TimedExitItem() }
+            item { NetTapLogItem() }
+            item { BatchDebugLogItem() }
             /* item { CrashToleranceItem() } */
             /* item { DisablePluginItem() } */
         }
@@ -1420,6 +1422,30 @@ class FreedomSettingActivity : XplerActivity() {
             checked = model.isLongPressLive.observeAsState(false),
             onCheckedChange = {
                 model.changeIsLongPressLive(it)
+            }
+        )
+    }
+
+    @Composable
+    private fun NetTapLogItem() {
+        SwitchItem(
+            text = "网络抓包日志",
+            subtext = "记录 App 自身的接口调用到 Download/Freedom/app_net_tap.log, 默认关闭, 仅排查问题时开启",
+            checked = model.isNetTapLog.observeAsState(false),
+            onCheckedChange = {
+                model.changeIsNetTapLog(it)
+            }
+        )
+    }
+
+    @Composable
+    private fun BatchDebugLogItem() {
+        SwitchItem(
+            text = "下载调试日志",
+            subtext = "记录「下载所有作品」的调试信息到 Download/Freedom/batch_debug.log, 默认关闭",
+            checked = model.isBatchDebugLog.observeAsState(false),
+            onCheckedChange = {
+                model.changeIsBatchDebugLog(it)
             }
         )
     }

@@ -102,7 +102,9 @@ class DownloadAllUserWorksLogic(
         BatchDebug.reset(context)
         BatchDebug.log("开始: nickname=$nickname shortId=$shortId secUid=$secUid uid=$uid awemeCount=$awemeCount")
         // App 自己发请求的抓包日志（重启抖音后、进入作者主页时就会开始记录）
-        BatchDebug.log("抓包日志: ${BatchDebug.tapPath().ifEmpty { "app_net_tap.log(尚未创建)" }}")
+        if (config.isNetTapLog) {
+            BatchDebug.log("抓包日志: ${BatchDebug.tapPath().ifEmpty { "app_net_tap.log(尚未创建)" }}")
+        }
 
         if (!UserPostApi.isAvailable()) {
             val reason = UserPostApi.lastError()
@@ -238,7 +240,13 @@ class DownloadAllUserWorksLogic(
             buildString {
                 append(summary)
                 append("\n\n--- 调试信息 ---\n")
-                append(BatchDebug.tail())
+                if (config.isBatchDebugLog || config.isNetTapLog) {
+                    append(BatchDebug.tail().ifBlank { "暂无日志" })
+                } else {
+                    append("调试日志未开启。\n")
+                    append("可在模块设置中开启「下载调试日志」和「网络抓包日志」后重试，\n")
+                    append("日志会保存到 Download/Freedom/batch_debug.log 和 app_net_tap.log。")
+                }
             }
         } else {
             summary

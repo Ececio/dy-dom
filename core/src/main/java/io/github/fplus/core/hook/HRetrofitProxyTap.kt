@@ -1,6 +1,7 @@
 package io.github.fplus.core.hook
 
 import io.github.fplus.core.base.BaseHook
+import io.github.fplus.core.config.ConfigV1
 import io.github.fplus.core.hook.logic.BatchDebug
 import io.github.xpler.core.XplerLog
 import io.github.xpler.core.hookBlockRunning
@@ -111,6 +112,8 @@ class HRetrofitProxyTap : BaseHook() {
         args: Array<Any?>?,
     ) {
         hookBlockRunning(params) {
+            // 开关关闭时直接返回, 避免每次请求都做反射和日志拼接
+            if (!ConfigV1.get().isNetTapLog) return@hookBlockRunning
             val realMethod = method ?: return@hookBlockRunning
             val path = httpPath(realMethod)
             if (path.isEmpty()) return@hookBlockRunning

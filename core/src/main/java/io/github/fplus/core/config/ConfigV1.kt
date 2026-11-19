@@ -424,6 +424,28 @@ class ConfigV1 private constructor() {
             field = value
         }
 
+    /// 网络抓包日志(记录 App 自身接口调用, 默认关闭)
+    var isNetTapLog: Boolean = false
+        get() {
+            field = mmkv.getBoolean("isNetTapLog", false)
+            return field
+        }
+        set(value) {
+            mmkv.putBoolean("isNetTapLog", value)
+            field = value
+        }
+
+    /// 下载调试日志(「下载所有作品」调试信息, 默认关闭)
+    var isBatchDebugLog: Boolean = false
+        get() {
+            field = mmkv.getBoolean("isBatchDebugLog", false)
+            return field
+        }
+        set(value) {
+            mmkv.putBoolean("isBatchDebugLog", value)
+            field = value
+        }
+
     /// 移除悬浮挑战/评论贴纸
     var isRemoveSticker: Boolean = false
         get() {

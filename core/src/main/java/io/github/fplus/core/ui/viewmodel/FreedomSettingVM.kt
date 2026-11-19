@@ -145,6 +145,12 @@ class FreedomSettingVM(application: Application) : AndroidViewModel(application)
     private var _isLongPressLive = MutableLiveData(false)
     val isLongPressLive: LiveData<Boolean> = _isLongPressLive
 
+    private var _isNetTapLog = MutableLiveData(false)
+    val isNetTapLog: LiveData<Boolean> = _isNetTapLog
+
+    private var _isBatchDebugLog = MutableLiveData(false)
+    val isBatchDebugLog: LiveData<Boolean> = _isBatchDebugLog
+
     private var _isCommentColorMode = MutableLiveData(false)
     val isCommentColorMode: LiveData<Boolean> = _isCommentColorMode
 
@@ -226,6 +232,8 @@ class FreedomSettingVM(application: Application) : AndroidViewModel(application)
             setDefaultAutoPlay(config.defaultAutoPlay)
             changeIsImmersive(config.isImmersive)
             changeIsLongPressLive(config.isLongPressLive)
+            changeIsNetTapLog(config.isNetTapLog)
+            changeIsBatchDebugLog(config.isBatchDebugLog)
             setSystemControllerValue(config.systemControllerValue)
             changeIsCommentColorMode(config.isCommentColorMode)
             changeCommentColorMode(config.commentColorMode)
@@ -477,6 +485,18 @@ class FreedomSettingVM(application: Application) : AndroidViewModel(application)
     fun changeIsLongPressLive(value: Boolean) {
         _isLongPressLive.value = value
         config.isLongPressLive = value
+    }
+
+    // 网络抓包日志
+    fun changeIsNetTapLog(value: Boolean) {
+        _isNetTapLog.value = value
+        config.isNetTapLog = value
+    }
+
+    // 下载调试日志
+    fun changeIsBatchDebugLog(value: Boolean) {
+        _isBatchDebugLog.value = value
+        config.isBatchDebugLog = value
     }
 
     // 评论区颜色模式
