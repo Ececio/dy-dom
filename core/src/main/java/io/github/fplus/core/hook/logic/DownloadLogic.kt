@@ -141,6 +141,7 @@ class DownloadLogic(
      * @param aweme
      */
     private fun downloadVideo(aweme: Aweme, isWebDav: Boolean = false) {
+        BatchDebug.attach(context)
         val videoUrlList = aweme.getVideoUrlCandidates(config.videoCoding, config.isBestQuality)
         XplerLog.d(
             "Download ${aweme.videoQualityInfo(config.videoCoding, config.isBestQuality)}, " +

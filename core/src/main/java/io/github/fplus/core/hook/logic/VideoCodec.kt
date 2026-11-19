@@ -41,7 +41,6 @@ object VideoCodec {
 
     /** ByteVC 文件的临时备份后缀，找到可播版本后会删掉 */
     private const val BACKUP_SUFFIX = ".bvc"
-
     /** 系统播放器/相册基本都能解的编码 */
     private val PLAYABLE = setOf("avc1", "avc3", "hvc1", "hev1", "av01", "vp09", "mp4v")
 
@@ -116,7 +115,9 @@ object VideoCodec {
                 BatchDebug.codec(
                     "probe[$probed/${rest.size}] codec=$sniffed host=${hostOf(url)} tail=${tailOf(url)}"
                 )
-                if (!isPlayable(sniffed)) continue
+                // api-play 这类“播放接口”地址，探测和整包下载拿到的编码可能不一样
+                // （实测探测 bvc2、下载却是 hvc1），所以只看直接指向文件的 CDN 地址的探测结果
+                if (!isPlayable(sniffed) && !isPlayUrl(url)) continue
             }
 
             // 探测不出编码（例如 CDN 拒绝 Range 请求）时才真的整包下回来验证
@@ -244,6 +245,15 @@ object VideoCodec {
     private fun tailOf(url: String): String = runCatching {
         URL(url).path.trimEnd('/').substringAfterLast('/').takeLast(48)
     }.getOrDefault("?")
+
+    /**
+     * 是否是 `/aweme/v1/play` 这类会重定向到真实文件的播放接口。
+     * 这类地址每次请求可能给出不同档位/编码，探测结果不能当准。
+     */
+    private fun isPlayUrl(url: String): Boolean = runCatching {
+        val parsed = URL(url)
+        parsed.path.trimEnd('/').endsWith("/play") || parsed.host.contains("api-play")
+    }.getOrDefault(false)
 
     private fun HttpsURLConnection.trustAll() {
         runCatching {

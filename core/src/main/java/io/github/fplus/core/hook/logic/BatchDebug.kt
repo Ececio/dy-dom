@@ -40,6 +40,14 @@ object BatchDebug {
     private var codecFile: File? = null
     private val memory = ArrayDeque<String>()
 
+    /** 下载时顺手拿到的宿主 Context，用来在 hook 线程里定位下载目录 */
+    private var appContext: Context? = null
+
+    /** 下载入口调用一次即可；拿不到 ActivityThread 时也能正常写日志 */
+    fun attach(context: Context) {
+        appContext = context.applicationContext
+    }
+
     /** 每次点击「开始下载」时调用，清空上一轮的日志 */
     fun reset(context: Context) {
         synchronized(lock) {
@@ -155,6 +163,7 @@ object BatchDebug {
 
     /** 宿主进程的 Application，用于拿下载目录；拿不到就放弃写文件 */
     private fun currentApplication(): Context? {
+        appContext?.let { return it }
         return runCatching {
             val clazz = Class.forName("android.app.ActivityThread")
             val thread = clazz.getMethod("currentActivityThread").invoke(null)
