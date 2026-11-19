@@ -3,6 +3,7 @@ package io.github.fplus.core.hook.logic
 import android.content.Context
 import com.freegang.extension.format
 import com.ss.android.ugc.aweme.feed.model.Aweme
+import com.ss.android.ugc.aweme.feed.model.BitRate
 import com.ss.ugc.aweme.ImageUrlStruct
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -682,7 +683,11 @@ fun Aweme.getVideoUrlList(coding: String): List<String> {
  *
  * 抖音把不同清晰度档位放在 `video.bitRate[]`（gearName/bitRate/playAddr/playAddr265）里，
  * 播放器使用的 `video.playAddr` 只是其中一个档位，不一定是最高档。
- * best=true 时先按码率从高到低取各档位地址，末尾再补上默认地址兜底，
+ *
+ * 排序不能只看码率：实测同一个作品里 `540_2_2` 的 bitRate 可能比 `720_2_2` 还高，
+ * 所以先按 gearName 里的分辨率数字排序，再用码率兜底。
+ *
+ * best=true 时先按清晰度从高到低取各档位地址，末尾再补上默认地址兜底，
  * 这样某个档位地址失效或缺少 H265 时不会直接下载失败。
  */
 fun Aweme.getVideoUrlCandidates(coding: String, best: Boolean): List<String> {
@@ -690,17 +695,18 @@ fun Aweme.getVideoUrlCandidates(coding: String, best: Boolean): List<String> {
     val result = LinkedHashSet<String>()
 
     if (best) {
-        val gears = video.bitRate.orEmpty().sortedByDescending { it.bitRate }
+        // 档位按分辨率从高到低；同一档位里优先用所选编码，缺地址时再用另一编码
+        // （高分辨率档位的另一种编码，仍然比低分辨率档位清晰）
+        val gears = video.bitRate.orEmpty().sortedWith(gearComparator)
         for (gear in gears) {
-            val urls = when (coding) {
-                "H265" -> gear.playAddr265?.urlList
-                    ?: gear.playAddr?.urlList?.takeIf { gear.isH265 == 1 }
-
-                "H264" -> gear.playAddr?.urlList?.takeIf { gear.isH265 != 1 }
-
-                else -> gear.playAddr?.urlList ?: gear.playAddr265?.urlList
+            val ordered = when (coding) {
+                "H265" -> listOfNotNull(gear.playAddr265, gear.playAddr)
+                "H264" -> listOfNotNull(gear.playAddr, gear.playAddr265)
+                else -> listOfNotNull(gear.playAddr, gear.playAddr265)
             }
-            urls.orEmpty().filterTo(result) { it.isNotBlank() }
+            ordered.forEach { urlModel ->
+                urlModel.urlList.orEmpty().filterTo(result) { it.isNotBlank() }
+            }
         }
     }
 
@@ -716,7 +722,7 @@ fun Aweme.getVideoUrlCandidates(coding: String, best: Boolean): List<String> {
 fun Aweme.videoQualityInfo(coding: String, best: Boolean): String {
     val video = video ?: return "video=null"
     val gears = video.bitRate.orEmpty()
-    val top = gears.sortedByDescending { gear -> gear.bitRate }.firstOrNull()
+    val top = gears.sortedWith(gearComparator).firstOrNull()
     return buildString {
         append("coding=").append(coding)
         append(", best=").append(best)
@@ -730,6 +736,17 @@ fun Aweme.videoQualityInfo(coding: String, best: Boolean): String {
         }
     }
 }
+
+/** 从 gearName（如 540_2_2 / normal_720_0）里取分辨率数字，用于清晰度排序 */
+private fun BitRate.gearPixels(): Int {
+    val name = gearName ?: return 0
+    return Regex("(\\d{3,4})").find(name)?.value?.toIntOrNull() ?: 0
+}
+
+/** 分辨率高的档位优先；分辨率相同再比码率 */
+private val gearComparator: Comparator<BitRate> =
+    compareByDescending<BitRate> { gear -> gear.gearPixels() }
+        .thenByDescending { gear -> gear.bitRate }
 
 fun Aweme.getImageUrlList(): List<ImageUrlStruct> {
     return images ?: return emptyList()
