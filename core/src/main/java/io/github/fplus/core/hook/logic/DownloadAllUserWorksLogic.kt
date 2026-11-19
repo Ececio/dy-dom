@@ -49,6 +49,9 @@ class DownloadAllUserWorksLogic(
     private var awemeCount: Int = 0
     private var lastTotal: Int = 0
 
+    /** 本轮里只拿到 ByteVC 编码的作品数量（能下载，但部分播放器没有画面） */
+    private var byteVcCount: Int = 0
+
     private lateinit var videoDir: File
     private lateinit var imageDir: File
 
@@ -182,6 +185,7 @@ class DownloadAllUserWorksLogic(
 
     private suspend fun downloadAll(notify: IProgressNotification): String {
         lastTotal = 0
+        byteVcCount = 0
         var cursor = 0L
         var page = 0
         var index = 0
@@ -229,6 +233,9 @@ class DownloadAllUserWorksLogic(
             append("完成: 成功 ").append(success).append(" 个")
             if (failed > 0) append(", 失败 ").append(failed).append(" 个")
             append("\n拉取 ").append(page).append(" 页, 共 ").append(total).append(" 个作品")
+            if (byteVcCount > 0) {
+                append("\n其中 ").append(byteVcCount).append(" 个只提供 ByteVC 编码, 部分播放器可能没有画面")
+            }
             if (error != null) append("\n").append(error)
         }
 
@@ -309,16 +316,17 @@ class DownloadAllUserWorksLogic(
         }
 
         val file = DownloadNaming.uniqueFile(videoDir.need(), baseName.secureFilename(".mp4"))
-        var result: File? = null
-        for (url in candidates) {
-            val got = downloadFile(url, file, notify, "第${index}个 %s%%")
-            if (got != null) {
-                result = got
-                break
+        // 先探测编码：抖音有些作品只给 ByteVC 流，系统播放器解不了（有声音没画面）
+        val picked = VideoCodec.pick(candidates)
+        val done = VideoCodec.downloadBest(picked) { url ->
+            downloadFile(url, file, notify, "第${index}个 %s%%") ?: run {
+                file.deleteIfEmpty()
+                null
             }
-            file.deleteIfEmpty()
         }
-        val saved = result ?: return false
+        val saved = done.file ?: return false
+        if (VideoCodec.isByteVc(done.codec)) byteVcCount++
+        BatchDebug.log("第${index}个 编码=${done.codec ?: "未知"}")
         XplerLog.d("DownloadAllWorks [$index] 保存成功: ${saved.absolutePath} (${saved.length()} bytes)")
         KMediaUtils.notifyMediaUpdate(context, saved.absolutePath)
         return true

@@ -23,6 +23,12 @@ object BatchDebug {
     /** 抓包日志最多保留多大，超过就裁掉前半部分 */
     private const val MAX_TAP_BYTES = 400_000L
 
+    /** 视频编码探测日志，和下载/抓包日志分开，方便排查「下载后没有画面」 */
+    private const val CODEC_FILE_NAME = "video_codec.log"
+
+    /** 编码日志最多保留多大，超过就裁掉前半部分 */
+    private const val MAX_CODEC_BYTES = 200_000L
+
     /** 弹窗里最多展示的行数，避免内容过长 */
     private const val MAX_MEMORY_LINES = 40
 
@@ -31,6 +37,7 @@ object BatchDebug {
 
     private var file: File? = null
     private var tapFile: File? = null
+    private var codecFile: File? = null
     private val memory = ArrayDeque<String>()
 
     /** 每次点击「开始下载」时调用，清空上一轮的日志 */
@@ -101,6 +108,38 @@ object BatchDebug {
     fun tapPath(): String {
         if (!ConfigV1.get().isNetTapLog) return ""
         return tapFile?.absolutePath.orEmpty()
+    }
+
+    /**
+     * 视频编码探测日志，写到 `Download/Freedom/video_codec.log`。
+     *
+     * 单独一个文件：单个下载也会写（[log] 只在下拉全部作品时初始化文件），
+     * 方便用户反馈「某几个视频没有画面」时直接把日志发过来。
+     */
+    fun codec(message: String) {
+        if (!ConfigV1.get().isBatchDebugLog) return
+        val line = timeFormat.format(Date()) + " " + message
+        synchronized(lock) {
+            val target = codecFile ?: openCodecFile() ?: return
+            runCatching {
+                if (target.length() > MAX_CODEC_BYTES) {
+                    val text = target.readText()
+                    target.writeText(text.substring(text.length / 2))
+                }
+                target.appendText(line + "\n")
+            }
+        }
+    }
+
+    private fun openCodecFile(): File? {
+        val context = currentApplication() ?: return null
+        return runCatching {
+            val dir = ConfigV1.getFreedomDir(context)
+            if (!dir.exists()) dir.mkdirs()
+            File(dir, CODEC_FILE_NAME).also { codecFile = it }
+        }.onFailure {
+            io.github.xpler.core.XplerLog.e("BatchDebug 编码日志初始化失败: ${it.message}")
+        }.getOrNull()
     }
 
     private fun openTapFile(): File? {

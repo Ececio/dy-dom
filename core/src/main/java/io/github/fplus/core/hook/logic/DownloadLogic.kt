@@ -341,21 +341,27 @@ class DownloadLogic(
                 // 下载逻辑
                 hook.singleLaunchIO(pureFileName) {
                     val file = File(parentPath.need(), pureFileName)
-                    var resultFile: File? = null
-                    for (url in urlList) {
-                        resultFile = downloadFile(
+                    // 先探测编码：抖音有些作品只给 ByteVC 流，系统播放器解不了（有声音没画面）
+                    val picked = VideoCodec.pick(urlList)
+                    val done = VideoCodec.downloadBest(picked) { url ->
+                        downloadFile(
                             url = url,
                             downloadFile = file,
                             notify = it,
                             progressText = "下载中 %s%%",
-                        )
-                        if (resultFile != null) break
-                        file.deleteIfEmpty()
+                        ) ?: run {
+                            file.deleteIfEmpty()
+                            null
+                        }
                     }
+                    val resultFile = done.file
                     if (resultFile != null) {
                         val message = if (isWebDav) "下载成功, 正在上传WebDav!" else "下载成功!"
                         it.setFinishedText(message)
                         hook.showToast(context, message)
+                        if (VideoCodec.isByteVc(done.codec)) {
+                            hook.showToast(context, "注意: 该视频为 ByteVC 编码, 部分播放器可能没有画面")
+                        }
                         KMediaUtils.notifyMediaUpdate(context, resultFile.absolutePath)
 
                         // 上传WebDav
@@ -388,22 +394,28 @@ class DownloadLogic(
                 // 下载逻辑
                 hook.singleLaunchIO(pureFileName) {
                     val file = File(parentPath.need(), pureFileName)
-                    var resultFile: File? = null
-                    for (url in urlList) {
-                        resultFile = downloadFile(
+                    // 先探测编码：抖音有些作品只给 ByteVC 流，系统播放器解不了（有声音没画面）
+                    val picked = VideoCodec.pick(urlList)
+                    val done = VideoCodec.downloadBest(picked) { url ->
+                        downloadFile(
                             url = url,
                             downloadFile = file,
                             notify = notify,
                             progressText = "%s%%",
-                        )
-                        if (resultFile != null) break
-                        file.deleteIfEmpty()
+                        ) ?: run {
+                            file.deleteIfEmpty()
+                            null
+                        }
                     }
+                    val resultFile = done.file
                     if (resultFile != null) {
                         hook.refresh { dismiss.invoke() }
                         val message = if (isWebDav) "下载成功, 正在上传WebDav!" else "下载成功!"
                         notify.setFinishedText(message)
                         hook.showToast(context, message)
+                        if (VideoCodec.isByteVc(done.codec)) {
+                            hook.showToast(context, "注意: 该视频为 ByteVC 编码, 部分播放器可能没有画面")
+                        }
                         KMediaUtils.notifyMediaUpdate(context, resultFile.absolutePath)
 
                         // 上传WebDav
