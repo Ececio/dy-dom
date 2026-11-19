@@ -183,7 +183,7 @@ object LiveRoomInfo {
             appendLine("关注数: $followCount")
             appendLine("送礼人数: $giftUvCount")
             appendLine("开播时间: ${timeText(startTime)}")
-            if (finishTime > 0L) appendLine("结束时间: ${timeText(finishTime)}")
+            if (status != 2 && finishTime > 0L) appendLine("结束时间: ${timeText(finishTime)}")
             appendLine("创建时间: ${timeText(createTime)}")
             appendLine("直播类型: ${if (audio) "语音直播" else "视频直播"}")
             if (shareUrl.isNotBlank()) appendLine("分享链接: $shareUrl")

@@ -27,6 +27,9 @@ class HLiveLongPress : BaseHook() {
 
     private val longPressTimeout = ViewConfiguration.getLongPressTimeout().toLong()
 
+    // 抖音直播间自身也有长按菜单(底部弹窗), 稍晚一点弹出, 保证我们的窗口在其上方
+    private val triggerDelay = longPressTimeout + 250L
+
     private var downX = 0f
     private var downY = 0f
     private var downTime = 0L
@@ -62,7 +65,7 @@ class HLiveLongPress : BaseHook() {
 
                     val runnable = Runnable { onLongPress() }
                     longPressRunnable = runnable
-                    handler.postDelayed(runnable, longPressTimeout)
+                    handler.postDelayed(runnable, triggerDelay)
                 }
 
                 MotionEvent.ACTION_MOVE -> {
@@ -95,7 +98,7 @@ class HLiveLongPress : BaseHook() {
         if (activity.isFinishing || activity.isDestroyed) return
 
         // 长按判定已被其它逻辑消费或耗时不足时忽略
-        if (SystemClock.uptimeMillis() - downTime < longPressTimeout - 50L) return
+        if (SystemClock.uptimeMillis() - downTime < triggerDelay - 50L) return
 
         // 弹窗本身不接收 Activity 的触摸，这里仅防止极短时间内重复弹出
         val now = SystemClock.uptimeMillis()
