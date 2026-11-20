@@ -5,15 +5,9 @@ import com.freegang.extension.format
 import com.ss.android.ugc.aweme.feed.model.Aweme
 import com.ss.android.ugc.aweme.feed.model.BitRate
 import com.ss.ugc.aweme.ImageUrlStruct
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.withContext
-import org.json.JSONArray
-import org.json.JSONObject
 import java.io.ByteArrayOutputStream
-import java.io.File
 import java.lang.reflect.Modifier
 import java.net.HttpURLConnection
 import java.net.URL
@@ -21,19 +15,8 @@ import java.net.URLEncoder
 import java.util.Date
 import java.util.Locale
 
-private const val MCA_HOST = "https://dmfw.mca.gov.cn"
-private const val AREA_LIST_API = "$MCA_HOST/9095/xzqh/getList"
-private const val STNAME_API = "$MCA_HOST/9095/stname/listPub"
-private const val BOUND_API = "https://geo.datav.aliyun.com/areas_v3/bound/"
-private const val PCAS_API =
-    "https://raw.githubusercontent.com/modood/Administrative-divisions-of-China/master/dist/pcas-code.json"
-private const val PCAS_CACHE_NAME = "freedomplus_pcas_code.json"
-private const val PCAS_CACHE_MAX_AGE = 30L * 24 * 60 * 60 * 1000
 private const val BROWSER_UA =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
-
-@Volatile
-private var pcasCache: JSONArray? = null
 
 fun Aweme.createDate(): String {
     return Date(this.createTime * 1000).format()
@@ -227,7 +210,7 @@ fun Aweme.cityInfo(): String {
  */
 suspend fun Aweme.areaApiInfo(): String? {
     val code = areaCode() ?: return null
-    return queryAreaDetail(code)
+    return VideoInfoApi.testArea(code).takeIf { it.ok }?.detail
 }
 
 /**
@@ -240,10 +223,11 @@ private suspend fun Aweme.stnameApiInfo(): String? {
     val keyword = addressInfo?.getTextValue("district")
         ?: addressInfo?.getTextValue("city")
         ?: poiName()
-        ?: return queryStname(code, null)
 
-    queryStname(code, keyword)?.let { return it }
-    return queryStname(code, null)
+    val withKeyword = VideoInfoApi.testStname(code, keyword)
+    if (withKeyword.ok) return withKeyword.detail
+    if (keyword == null) return null
+    return VideoInfoApi.testStname(code, null).takeIf { it.ok }?.detail
 }
 
 /**
@@ -252,11 +236,11 @@ private suspend fun Aweme.stnameApiInfo(): String? {
  */
 private suspend fun Aweme.boundApiInfo(): String? {
     val adcode = areaCode()?.take(6) ?: return null
-    return queryBound(adcode)
+    return VideoInfoApi.testBound(adcode).takeIf { it.ok }?.detail
 }
 
 /**
- * 【4】开源数据集 · 省市区街道四级（落盘缓存，30 天有效）:
+ * 【4】开源数据集 · 省市区街道四级（落盘在 Download/Freedom/region，30 天有效）:
  * https://raw.githubusercontent.com/modood/Administrative-divisions-of-China/master/dist/pcas-code.json
  */
 private suspend fun Aweme.offlineAreaInfo(context: Context): String? {
@@ -264,21 +248,12 @@ private suspend fun Aweme.offlineAreaInfo(context: Context): String? {
     val names = addressInfoNames()
     if (code == null && names.isEmpty()) return null
 
-    val root = loadPcas(context) ?: return null
-
-    val match = findPcasNodeByCode(root, code, emptyList())
-        ?: findPcasNodeByName(root, names)
-    val path = (match?.path
-        ?: findPcasByNameDeep(root, names.lastOrNull())
-        ?: return null).toMutableList()
-
-    // 数据集只到区县时，尝试用 POI 名称补一个街道级
-    val poi = poiName()
-    if (poi != null) {
-        findPcasChild(match?.node?.optJSONArray("children"), poi)?.let { path += it.optString("name") }
-    }
-
-    return path.joinToString(" / ")
+    return VideoInfoApi.testOffline(
+        context = context,
+        code = code,
+        names = names,
+        poi = poiName(),
+    ).takeIf { it.ok }?.detail
 }
 
 private fun Aweme.poiInfo(): Any? = getFieldValue("poiInfo", "poi_info")
@@ -313,259 +288,10 @@ private fun String?.asAreaCode(): String? {
     return value.takeIf { it.length >= 6 && it.all(Char::isDigit) }
 }
 
-private suspend fun queryAreaDetail(code: String): String? = withContext(Dispatchers.IO) {
-    try {
-        val url = "$AREA_LIST_API?code=${encode(code)}&maxLevel=0"
-        val json = JSONObject(httpGet(url))
-        if (json.optInt("status", 0) != 200) {
-            null
-        } else {
-            json.optJSONObject("data")?.let { data ->
-                val name = data.optString("name").takeIf { it.isNotBlank() } ?: return@let null
-                val type = data.optString("type").takeIf { it.isNotBlank() }
-                val level = data.optInt("level", 0).takeIf { it > 0 }
-                listOfNotNull(name, type, level?.let { "level $it" }).joinToString(" · ")
-            }
-        }
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: Exception) {
-        null
-    }
-}
 
-private suspend fun queryStname(code: String, keyword: String?): String? = withContext(Dispatchers.IO) {
-    try {
-        val url = "$STNAME_API?page=1&size=1&code=${encode(code)}&stName=${encode(keyword.orEmpty())}"
-        val json = JSONObject(httpGet(url))
-        val record = json.optJSONArray("records")?.optJSONObject(0) ?: return@withContext null
-        val name = record.optString("standard_name").takeIf { it.isNotBlank() } ?: return@withContext null
-        val type = record.optString("place_type").takeIf { it.isNotBlank() }
-        val region = listOf("province_name", "city_name", "area_name")
-            .mapNotNull { key -> record.optString(key).takeIf { it.isNotBlank() } }
-            .distinct()
-            .joinToString(" ")
-        val spelling = record.optString("roman_alphabet_spelling").trim().takeIf { it.isNotBlank() }
-        val center = record.optJSONObject("gdm")
-            ?.optJSONArray("coordinates")
-            ?.optJSONArray(0)
-            ?.takeIf { it.length() >= 2 }
-            ?.let { String.format(Locale.ROOT, "%.4f,%.4f", it.optDouble(0), it.optDouble(1)) }
+internal fun encode(value: String): String = URLEncoder.encode(value, "UTF-8")
 
-        listOfNotNull(
-            name,
-            type,
-            region.takeIf { it.isNotBlank() },
-            spelling,
-            center?.let { "坐标 $it" },
-        ).joinToString(" · ")
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: Exception) {
-        null
-    }
-}
-
-private suspend fun queryBound(adcode: String): String? = withContext(Dispatchers.IO) {
-    try {
-        val text = try {
-            httpGet("$BOUND_API$adcode.json", maxBytes = 512 * 1024)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            // 个别 adcode 只有 _full 版本
-            httpGet("$BOUND_API${adcode}_full.json", maxBytes = 512 * 1024)
-        }
-        val props = extractJsonObject(text, "properties")?.let { JSONObject(it) } ?: return@withContext null
-
-        val name = props.optString("name").takeIf { it.isNotBlank() } ?: return@withContext null
-        val code = props.opt("adcode")?.toString()?.takeIf { it.isNotBlank() }
-        val center = props.optJSONArray("center")
-            ?.takeIf { it.length() >= 2 }
-            ?.let { String.format(Locale.ROOT, "%.4f,%.4f", it.optDouble(0), it.optDouble(1)) }
-        val level = props.optString("level").takeIf { it.isNotBlank() }
-        val parent = props.optJSONObject("parent")?.opt("adcode")?.toString()?.takeIf { it.isNotBlank() }
-
-        listOfNotNull(
-            name,
-            code?.let { "adcode $it" },
-            center?.let { "中心 $it" },
-            level,
-            parent?.let { "上级 $it" },
-        ).joinToString(" · ")
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: Exception) {
-        null
-    }
-}
-
-private suspend fun loadPcas(context: Context): JSONArray? = withContext(Dispatchers.IO) {
-    pcasCache?.let { return@withContext it }
-
-    val cacheFile = File(context.cacheDir, PCAS_CACHE_NAME)
-    try {
-        val fresh = cacheFile.exists() && cacheFile.length() > 0 &&
-            System.currentTimeMillis() - cacheFile.lastModified() < PCAS_CACHE_MAX_AGE
-
-        val text = if (fresh) {
-            cacheFile.readText()
-        } else {
-            httpGet(
-                url = PCAS_API,
-                maxBytes = 8 * 1024 * 1024,
-                connectTimeout = 5000,
-                readTimeout = 10000,
-            ).also { data -> runCatching { cacheFile.writeText(data) } }
-        }
-
-        if (text.isBlank()) return@withContext null
-        JSONArray(text).also { pcasCache = it }
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: Exception) {
-        // 下载失败时尽量读取过期缓存，保证离线可用
-        try {
-            if (cacheFile.exists() && cacheFile.length() > 0) {
-                JSONArray(cacheFile.readText()).also { pcasCache = it }
-            } else {
-                null
-            }
-        } catch (ignored: Exception) {
-            null
-        }
-    }
-}
-
-private data class PcasMatch(val node: JSONObject, val path: List<String>)
-
-/**
- * modood 数据集的层级编码为 2 位省 / 4 位市 / 6 位区县 / 9 位街道，
- * 这里把作品的 6 位（或 12 位）行政区划代码换算成对应层级的前缀。
- */
-private fun pcasCodeCandidates(code: String): Set<String> {
-    val value = code.trim()
-    if (value.length < 6) return setOf(value)
-
-    val result = mutableSetOf(value.take(6))
-    if (value.take(6).endsWith("00")) {
-        val city = value.take(4)
-        result += city
-        if (city.endsWith("00")) result += city.take(2)
-    }
-    return result
-}
-
-private fun findPcasNodeByCode(
-    nodes: JSONArray?,
-    code: String?,
-    path: List<String>,
-): PcasMatch? {
-    if (nodes == null || code.isNullOrBlank()) return null
-    val candidates = pcasCodeCandidates(code)
-
-    for (i in 0 until nodes.length()) {
-        val node = nodes.optJSONObject(i) ?: continue
-        val nodePath = path + node.optString("name")
-        if (node.optString("code") in candidates) {
-            return PcasMatch(node, nodePath)
-        }
-        findPcasNodeByCode(node.optJSONArray("children"), code, nodePath)?.let { return it }
-    }
-    return null
-}
-
-private fun findPcasNodeByName(nodes: JSONArray?, names: List<String>): PcasMatch? {
-    if (nodes == null || names.isEmpty()) return null
-
-    var current: JSONArray? = nodes
-    var last: PcasMatch? = null
-    val path = mutableListOf<String>()
-    for (name in names) {
-        val node = findPcasChild(current, name) ?: break
-        path += node.optString("name")
-        last = PcasMatch(node, path.toList())
-        current = node.optJSONArray("children")
-    }
-    return last
-}
-
-private fun findPcasByNameDeep(
-    nodes: JSONArray?,
-    name: String?,
-    path: List<String> = emptyList(),
-): List<String>? {
-    if (nodes == null || name.isNullOrBlank()) return null
-    val target = normalizeAreaName(name)
-
-    for (i in 0 until nodes.length()) {
-        val node = nodes.optJSONObject(i) ?: continue
-        val nodePath = path + node.optString("name")
-        if (normalizeAreaName(node.optString("name")) == target) return nodePath
-        findPcasByNameDeep(node.optJSONArray("children"), name, nodePath)?.let { return it }
-    }
-    return null
-}
-
-private fun findPcasChild(nodes: JSONArray?, name: String): JSONObject? {
-    if (nodes == null) return null
-    val target = normalizeAreaName(name)
-    for (i in 0 until nodes.length()) {
-        val node = nodes.optJSONObject(i) ?: continue
-        if (normalizeAreaName(node.optString("name")) == target) return node
-    }
-    return null
-}
-
-private fun normalizeAreaName(name: String): String {
-    var value = name.trim()
-    for (suffix in listOf("特别行政区", "自治区", "自治州", "自治县", "街道", "省", "市", "区", "县", "旗")) {
-        if (value.length > suffix.length && value.endsWith(suffix)) {
-            value = value.removeSuffix(suffix)
-            break
-        }
-    }
-    return value
-}
-
-/**
- * 从 JSON 文本中截取指定 key 对应的对象，允许文本被截断（边界接口只取前半段）。
- */
-private fun extractJsonObject(text: String, key: String): String? {
-    val keyIndex = text.indexOf("\"$key\"")
-    if (keyIndex < 0) return null
-
-    val start = text.indexOf('{', keyIndex)
-    if (start < 0) return null
-
-    var depth = 0
-    var inString = false
-    var escaped = false
-    for (index in start until text.length) {
-        val char = text[index]
-        if (inString) {
-            when {
-                escaped -> escaped = false
-                char == '\\' -> escaped = true
-                char == '"' -> inString = false
-            }
-        } else {
-            when (char) {
-                '"' -> inString = true
-                '{' -> depth++
-                '}' -> {
-                    depth--
-                    if (depth == 0) return text.substring(start, index + 1)
-                }
-            }
-        }
-    }
-    return null
-}
-
-private fun encode(value: String): String = URLEncoder.encode(value, "UTF-8")
-
-private fun httpGet(
+internal fun httpGet(
     url: String,
     cookie: String? = null,
     allowRetry: Boolean = true,

@@ -81,6 +81,7 @@ import io.github.fplus.core.ui.component.FCountDownMessageDialog
 import io.github.fplus.core.ui.component.FMessageDialog
 import io.github.fplus.core.ui.component.FWaitingMessageDialog
 import io.github.fplus.core.ui.dialog.FavoriteAuthorsDialog
+import io.github.fplus.core.ui.dialog.VideoInfoInterfacesDialog
 import io.github.fplus.core.ui.viewmodel.FreedomSettingVM
 import io.github.fplus.plugin.activity.XplerActivity
 import io.github.fplus.resource.IconRes
@@ -279,6 +280,7 @@ class FreedomSettingActivity : XplerActivity() {
         ) {
             item { DownloadItem() }
             item { FavoriteAuthorsItem() }
+            item { VideoInfoInterfacesItem() }
             item { SaveEmojiItem() }
             item { TranslucentItem() }
             item { RemoveStickerItem() }
@@ -495,6 +497,25 @@ class FreedomSettingActivity : XplerActivity() {
                         )
                     }
                 },
+            )
+        }
+    }
+
+    @Composable
+    private fun VideoInfoInterfacesItem() {
+        var showDialog by remember { mutableStateOf(false) }
+
+        ClickItem(
+            text = "视频信息接口管理",
+            subtext = "测试区划/地名/边界/离线地区库是否正常，可手动更新地区库文件",
+            onClick = {
+                showDialog = true
+            },
+        )
+
+        if (showDialog) {
+            VideoInfoInterfacesDialog(
+                onDismiss = { showDialog = false },
             )
         }
     }
