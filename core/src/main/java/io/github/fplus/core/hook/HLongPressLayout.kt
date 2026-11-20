@@ -60,6 +60,17 @@ class HLongPressLayout : BaseHook() {
             "com.ss.android.ugc.aweme.common.widget.VerticalViewPager"
         private const val LIVE_PLAYER =
             "com.bytedance.android.livesdkapi.roomplayer.LivePlayerView"
+
+        /**
+         * 直播预览卡片独有、普通视频页不会出现的视图。
+         * 「直播」Tab 的部分预览卡没有可见的 LivePlayerView，只能靠这些引导视图判定。
+         */
+        private val LIVE_PREVIEW_VIEWS = arrayOf(
+            LIVE_PLAYER,
+            "com.ss.android.ugc.aweme.feed.widget.entertip.view.LiveGuideProgressBgView",
+            "com.ss.android.ugc.aweme.feed.widget.entertip.view.LiveGuideAutoEnterCancelView",
+            "com.ss.android.ugc.aweme.feed.widget.entertip.view.LiveGuideCountDownBgView",
+        )
         private const val MAX_SCAN_VIEWS = 600
     }
 
@@ -118,7 +129,7 @@ class HLongPressLayout : BaseHook() {
 
             // 注册过直播预览的布局直接放行（部分预览卡没有 LivePlayerView）
             val registered = synchronized(livePreviewData) { livePreviewData.containsKey(view) }
-            if (!registered && !hasLivePlayer(view)) return@hookBlockRunning
+            if (!registered && !isLivePreviewPage(view)) return@hookBlockRunning
             setArgs(arrayOf(null))
         }.onFailure {
             XplerLog.e(it)
@@ -312,24 +323,25 @@ class HLongPressLayout : BaseHook() {
      * 判断当前长按的 LongPressLayout 是否属于直播预览卡片。
      *
      * 优先用 LivePreviewGestureWidget 注册的数据（能精确对应到卡片）；
-     * 「直播」Tab 的预览页没有走这个 widget，退回用页面里是否存在
-     * 直播播放器来判断，避免把普通视频误判成直播。
+     * 否则看这一页里有没有直播预览专属视图。
+     *
+     * 注意不要依赖 HVerticalViewPager.currentAweme：「直播」Tab 的 adapter
+     * 取不到 Aweme，按下瞬间经常是 null 或上一页的普通视频，会导致漏判。
      */
     private fun findLivePreview(view: View): LivePreviewData? {
         synchronized(livePreviewData) {
             livePreviewData[view]?.let { return it }
         }
 
-        if (!hasLivePlayer(view)) return null
-        val aweme = HVerticalViewPager.currentAweme ?: return null
-        if (!aweme.isLive) return null
+        if (!isLivePreviewPage(view)) return null
+        val aweme = HVerticalViewPager.currentAweme?.takeIf { it.isLive }
         return LivePreviewData(room = null, aweme = aweme)
     }
 
     /**
-     * 长按所在的一整页（VerticalViewPager 的一页）里是否有直播播放器。
+     * 长按所在的一整页（VerticalViewPager 的一页）里是否有直播预览专属视图。
      */
-    private fun hasLivePlayer(view: View): Boolean {
+    private fun isLivePreviewPage(view: View): Boolean {
         var page: View = view
         while (true) {
             val parent = page.parent as? View ?: return false
@@ -343,7 +355,9 @@ class HLongPressLayout : BaseHook() {
         while (stack.isNotEmpty() && visited < MAX_SCAN_VIEWS) {
             val current = stack.removeLast()
             visited++
-            if (current.javaClass.name == LIVE_PLAYER && current.visibility == View.VISIBLE) {
+            if (current.visibility == View.VISIBLE &&
+                LIVE_PREVIEW_VIEWS.contains(current.javaClass.name)
+            ) {
                 return true
             }
             if (current is ViewGroup) {
@@ -741,10 +755,15 @@ class HLongPressLayout : BaseHook() {
                         aweme = thisObject?.findFieldGetValue { type(Aweme::class.java) }
                             ?: HVideoViewHolder.aweme
 
-                        // 直播预览卡片：原生这套长按会直接进直播间，一律拦掉
-                        if (config.isLongPressLive && aweme?.isLive == true) {
-                            setResultVoid()
-                            return@onBefore
+                        // 直播预览卡片：原生这套长按会直接进直播间，一律拦掉。
+                        // 部分「直播」Tab 卡片拿不到直播 Aweme，这里再用页面视图兜底判定。
+                        if (config.isLongPressLive) {
+                            val layout = thisObject?.findFieldGetValue<View> { name("LJIIJJI") }
+                                ?: (thisObject as? View)
+                            if (aweme?.isLive == true || (layout != null && isLivePreviewPage(layout))) {
+                                setResultVoid()
+                                return@onBefore
+                            }
                         }
 
                         if (!config.isNeatMode)
