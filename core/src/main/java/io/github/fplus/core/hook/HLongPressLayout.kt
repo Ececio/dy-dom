@@ -26,6 +26,8 @@ import io.github.fplus.core.config.ConfigV1
 import io.github.fplus.core.helper.DexkitBuilder
 import io.github.fplus.core.hook.logic.DownloadAllUserWorksLogic
 import io.github.fplus.core.hook.logic.DownloadLogic
+import io.github.fplus.core.hook.logic.FavoriteAuthor
+import io.github.fplus.core.hook.logic.FavoriteAuthorStore
 import io.github.fplus.core.hook.logic.authorInfoText
 import io.github.fplus.core.hook.logic.videoInfoText
 import io.github.fplus.core.ui.activity.FreedomSettingActivity
@@ -167,6 +169,7 @@ class HLongPressLayout : BaseHook() {
             items.add("下载所有作品")
         }
 
+        items.add("收藏作者")
         items.add("获取作者信息")
 
         if (config.isNeatMode) {
@@ -219,6 +222,27 @@ class HLongPressLayout : BaseHook() {
                     context = view.context,
                     aweme = aweme,
                 ).start()
+            }
+
+            "收藏作者" -> {
+                val author = FavoriteAuthor.fromAweme(aweme)
+                if (author == null) {
+                    showToast(view.context, "未获取到作者信息")
+                    return
+                }
+                val context = view.context.applicationContext
+                singleLaunchIO("favoriteAuthor") {
+                    when (FavoriteAuthorStore.upsert(context, author)) {
+                        FavoriteAuthorStore.Result.ADDED ->
+                            showToast(context, "已收藏作者：${author.displayName}")
+
+                        FavoriteAuthorStore.Result.UPDATED ->
+                            showToast(context, "已更新收藏：${author.displayName}")
+
+                        FavoriteAuthorStore.Result.FAILED ->
+                            showToast(context, "收藏失败，请检查存储权限")
+                    }
+                }
             }
 
             "获取作者信息" -> {

@@ -46,6 +46,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -69,6 +70,8 @@ import com.freegang.extension.findMethodInvoke
 import com.freegang.ktutils.app.KToastUtils
 import io.github.fplus.core.helper.DexkitBuilder
 import io.github.fplus.core.helper.HighlightStyleBuilder
+import io.github.fplus.core.hook.logic.FavoriteAuthor
+import io.github.fplus.core.hook.logic.FavoriteAuthorStore
 import io.github.fplus.core.ui.ModuleTheme
 import io.github.fplus.core.ui.asDp
 import io.github.fplus.core.ui.component.FCard
@@ -76,6 +79,7 @@ import io.github.fplus.core.ui.component.FCardBorder
 import io.github.fplus.core.ui.component.FCountDownMessageDialog
 import io.github.fplus.core.ui.component.FMessageDialog
 import io.github.fplus.core.ui.component.FWaitingMessageDialog
+import io.github.fplus.core.ui.dialog.FavoriteAuthorsDialog
 import io.github.fplus.core.ui.viewmodel.FreedomSettingVM
 import io.github.fplus.plugin.activity.XplerActivity
 import io.github.fplus.resource.IconRes
@@ -273,6 +277,7 @@ class FreedomSettingActivity : XplerActivity() {
             modifier = modifier,
         ) {
             item { DownloadItem() }
+            item { FavoriteAuthorsItem() }
             item { SaveEmojiItem() }
             item { TranslucentItem() }
             item { RemoveStickerItem() }
@@ -427,6 +432,67 @@ class FreedomSettingActivity : XplerActivity() {
                     }
                 }
             }
+        }
+    }
+
+    @Composable
+    private fun FavoriteAuthorsItem() {
+        var showDialog by remember { mutableStateOf(false) }
+        var authors by remember { mutableStateOf<List<FavoriteAuthor>>(emptyList()) }
+
+        val count by produceState(initialValue = 0, key1 = showDialog) {
+            value = withContext(Dispatchers.IO) {
+                runCatching { FavoriteAuthorStore.all(this@FreedomSettingActivity).size }.getOrDefault(0)
+            }
+        }
+
+        ClickItem(
+            text = "收藏作者",
+            subtext = if (count > 0) {
+                "已收藏 $count 位作者，点击查看、跳转主页或删除"
+            } else {
+                "收藏时保存昵称、全部 ID、签名、生日，点击查看列表"
+            },
+            onClick = {
+                lifecycleScope.launch {
+                    authors = withContext(Dispatchers.IO) {
+                        runCatching {
+                            FavoriteAuthorStore.all(this@FreedomSettingActivity)
+                        }.getOrDefault(emptyList())
+                    }
+                    showDialog = true
+                }
+            },
+        )
+
+        if (showDialog) {
+            FavoriteAuthorsDialog(
+                authors = authors,
+                onDismiss = { showDialog = false },
+                onOpen = { author ->
+                    if (!author.openProfile(this@FreedomSettingActivity)) {
+                        KToastUtils.show(application, "无法打开作者主页")
+                    }
+                },
+                onDelete = { author ->
+                    lifecycleScope.launch {
+                        val removed = withContext(Dispatchers.IO) {
+                            runCatching {
+                                FavoriteAuthorStore.remove(this@FreedomSettingActivity, author.key)
+                            }.getOrDefault(false)
+                        }
+                        authors = withContext(Dispatchers.IO) {
+                            runCatching {
+                                FavoriteAuthorStore.all(this@FreedomSettingActivity)
+                            }.getOrDefault(emptyList())
+                        }
+                        KToastUtils.show(
+                            application,
+                            if (removed) "已删除 ${author.displayName}" else "删除失败",
+                        )
+                    }
+                },
+            )
         }
     }
 
@@ -2108,6 +2174,50 @@ class FreedomSettingActivity : XplerActivity() {
                 }
             },
         )
+    }
+
+    @Composable
+    private fun ClickItem(
+        text: String,
+        subtext: String = "",
+        onClick: () -> Unit,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp)
+                .clickable(
+                    indication = null,
+                    interactionSource = remember { MutableInteractionSource() },
+                    onClick = onClick,
+                )
+                .then(if (subtext.isNotBlank()) Modifier.padding(vertical = 4.dp) else Modifier),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = text,
+                    style = MaterialTheme.typography.body1,
+                )
+                if (subtext.isNotBlank()) {
+                    Text(
+                        text = subtext,
+                        style = MaterialTheme.typography.body1.copy(
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colors.onSurface.copy(0.5f),
+                        ),
+                    )
+                }
+            }
+            Text(
+                text = "›",
+                modifier = Modifier.padding(start = 8.dp),
+                style = MaterialTheme.typography.body1.copy(
+                    fontSize = 20.sp,
+                    color = MaterialTheme.colors.onSurface.copy(0.35f),
+                ),
+            )
+        }
     }
 
     @OptIn(ExperimentalFoundationApi::class)

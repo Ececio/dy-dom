@@ -1,0 +1,174 @@
+package io.github.fplus.core.ui.dialog
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.Divider
+import androidx.compose.material.MaterialTheme
+import androidx.compose.material.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import io.github.fplus.core.hook.logic.FavoriteAuthor
+import io.github.fplus.core.ui.component.FDialog
+
+/**
+ * 收藏作者列表弹窗。
+ *
+ * 点击一行跳转作者主页，点右侧「删除」移除；数据来源是
+ * `Download/Freedom/favorites/authors.json`，可以直接备份或手工编辑。
+ */
+@Composable
+fun FavoriteAuthorsDialog(
+    authors: List<FavoriteAuthor>,
+    onDismiss: () -> Unit,
+    onOpen: (FavoriteAuthor) -> Unit,
+    onDelete: (FavoriteAuthor) -> Unit,
+) {
+    FDialog(
+        modifier = Modifier.fillMaxWidth(),
+        cornerRadius = 12.dp,
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 24.dp, end = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "收藏作者 (${authors.size})",
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(vertical = 16.dp),
+                    style = MaterialTheme.typography.body1.copy(fontWeight = FontWeight.Bold),
+                )
+                Text(
+                    text = "关闭",
+                    modifier = Modifier
+                        .clickable { onDismiss() }
+                        .padding(horizontal = 12.dp, vertical = 16.dp),
+                    style = MaterialTheme.typography.body1.copy(
+                        color = MaterialTheme.colors.primary,
+                    ),
+                )
+            }
+            Divider()
+
+            if (authors.isEmpty()) {
+                Text(
+                    text = "还没有收藏作者。\n在视频上长按，选「收藏作者」即可加入列表。",
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 28.dp),
+                    style = MaterialTheme.typography.body1.copy(
+                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
+                    ),
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 420.dp),
+                ) {
+                    items(authors, key = { it.key }) { author ->
+                        FavoriteAuthorRow(
+                            author = author,
+                            onOpen = { onOpen(author) },
+                            onDelete = { onDelete(author) },
+                        )
+                        Divider()
+                    }
+                }
+            }
+
+            Text(
+                text = "文件: Download/Freedom/favorites/authors.json",
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
+                style = MaterialTheme.typography.body2.copy(
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.45f),
+                ),
+            )
+        }
+    }
+}
+
+@Composable
+private fun FavoriteAuthorRow(
+    author: FavoriteAuthor,
+    onOpen: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val muted = MaterialTheme.colors.onSurface.copy(alpha = 0.55f)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onOpen() }
+            .padding(horizontal = 24.dp, vertical = 10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = author.displayName,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.body1.copy(fontWeight = FontWeight.Bold),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = "删除",
+                modifier = Modifier
+                    .clickable { onDelete() }
+                    .padding(start = 16.dp, top = 6.dp, bottom = 6.dp),
+                style = MaterialTheme.typography.body2.copy(
+                    fontSize = 12.sp,
+                    color = Color(0xFFE53935),
+                ),
+            )
+        }
+
+        val ids = buildString {
+            if (author.douyinId.isNotBlank()) append("抖音号 ").append(author.douyinId)
+            if (author.uid.isNotBlank()) {
+                if (isNotEmpty()) append(" · ")
+                append("UID ").append(author.uid)
+            }
+        }
+        if (ids.isNotBlank()) {
+            Text(
+                text = ids,
+                modifier = Modifier.padding(top = 2.dp),
+                style = MaterialTheme.typography.body2.copy(fontSize = 12.sp, color = muted),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+
+        if (author.birthday.isNotBlank()) {
+            Text(
+                text = "生日 ${author.birthday}",
+                modifier = Modifier.padding(top = 2.dp),
+                style = MaterialTheme.typography.body2.copy(fontSize = 12.sp, color = muted),
+            )
+        }
+
+        if (author.signature.isNotBlank()) {
+            Text(
+                text = author.signature,
+                modifier = Modifier.padding(top = 4.dp),
+                style = MaterialTheme.typography.body2.copy(fontSize = 12.sp, color = muted),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
