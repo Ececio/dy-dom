@@ -13,6 +13,7 @@ import com.freegang.extension.activeActivity
 import com.freegang.extension.asOrNull
 import com.freegang.extension.findFieldGetValue
 import com.freegang.extension.findFieldSetValue
+import com.freegang.extension.findMethodInvoke
 import com.freegang.extension.firstParentOrNull
 import com.freegang.extension.forEachChild
 import com.freegang.extension.isDarkMode
@@ -54,6 +55,12 @@ class HLongPressLayout : BaseHook() {
             val room: Any?,
             val aweme: Any?,
         )
+
+        private const val VERTICAL_VIEW_PAGER =
+            "com.ss.android.ugc.aweme.common.widget.VerticalViewPager"
+        private const val LIVE_PLAYER =
+            "com.bytedance.android.livesdkapi.roomplayer.LivePlayerView"
+        private const val MAX_SCAN_VIEWS = 600
     }
 
     private val config
@@ -173,6 +180,14 @@ class HLongPressLayout : BaseHook() {
         val live = findLivePreview(view)
         if (live != null) {
             if (!config.isLongPressLive) return
+            // 屏蔽原生长按菜单（直播预览的原生监听器在 LongPressLayout.LJ 字段）
+            runCatching {
+                view.findFieldSetValue(null) { name("LJ") }
+                view.findMethodInvoke<Any>(block = {
+                    name("LIZIZ")
+                    parameterTypes(emptyList())
+                })
+            }
             // 直播预览卡片松手会进入直播间，先把这次手势的抬起事件吃掉
             suppressClickUp = true
             showLiveOptionsMenu(view, live)
@@ -219,17 +234,46 @@ class HLongPressLayout : BaseHook() {
     /**
      * 判断当前长按的 LongPressLayout 是否属于直播预览卡片。
      *
-     * 优先用 LivePreviewGestureWidget 注册的数据（能精确对应到卡片），
-     * 注册失败时退回当前页面的 Aweme，只要它是直播也算。
+     * 优先用 LivePreviewGestureWidget 注册的数据（能精确对应到卡片）；
+     * 「直播」Tab 的预览页没有走这个 widget，退回用页面里是否存在
+     * 直播播放器来判断，避免把普通视频误判成直播。
      */
     private fun findLivePreview(view: View): LivePreviewData? {
         synchronized(livePreviewData) {
             livePreviewData[view]?.let { return it }
         }
 
+        if (!hasLivePlayer(view)) return null
         val aweme = HVerticalViewPager.currentAweme ?: return null
         if (!aweme.isLive) return null
         return LivePreviewData(room = null, aweme = aweme)
+    }
+
+    /**
+     * 长按所在的一整页（VerticalViewPager 的一页）里是否有直播播放器。
+     */
+    private fun hasLivePlayer(view: View): Boolean {
+        var page: View = view
+        while (true) {
+            val parent = page.parent as? View ?: return false
+            if (parent.javaClass.name == VERTICAL_VIEW_PAGER) break
+            page = parent
+        }
+
+        val stack = ArrayDeque<View>()
+        stack.addLast(page)
+        var visited = 0
+        while (stack.isNotEmpty() && visited < MAX_SCAN_VIEWS) {
+            val current = stack.removeLast()
+            visited++
+            if (current.javaClass.name == LIVE_PLAYER) return true
+            if (current is ViewGroup) {
+                for (i in 0 until current.childCount) {
+                    stack.addLast(current.getChildAt(i))
+                }
+            }
+        }
+        return false
     }
 
     private fun showLiveOptionsMenu(view: View, data: LivePreviewData) {
