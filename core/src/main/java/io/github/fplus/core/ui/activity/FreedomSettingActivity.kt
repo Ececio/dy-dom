@@ -45,6 +45,7 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -439,8 +440,9 @@ class FreedomSettingActivity : XplerActivity() {
     private fun FavoriteAuthorsItem() {
         var showDialog by remember { mutableStateOf(false) }
         var authors by remember { mutableStateOf<List<FavoriteAuthor>>(emptyList()) }
+        var refreshKey by remember { mutableIntStateOf(0) }
 
-        val count by produceState(initialValue = 0, key1 = showDialog) {
+        val count by produceState(initialValue = 0, key1 = showDialog, key2 = refreshKey) {
             value = withContext(Dispatchers.IO) {
                 runCatching { FavoriteAuthorStore.all(this@FreedomSettingActivity).size }.getOrDefault(0)
             }
@@ -486,6 +488,7 @@ class FreedomSettingActivity : XplerActivity() {
                                 FavoriteAuthorStore.all(this@FreedomSettingActivity)
                             }.getOrDefault(emptyList())
                         }
+                        refreshKey++
                         KToastUtils.show(
                             application,
                             if (removed) "已删除 ${author.displayName}" else "删除失败",
