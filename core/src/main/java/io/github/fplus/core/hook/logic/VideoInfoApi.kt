@@ -42,8 +42,8 @@ object VideoInfoApi {
             val status = json.optInt("status", 0)
             if (status != 200) error("接口状态 $status")
             val data = json.optJSONObject("data") ?: error("返回内容没有 data 字段")
-            val name = data.optString("name").takeIf { it.isNotBlank() } ?: error("返回内容没有 name 字段")
-            val type = data.optString("type").takeIf { it.isNotBlank() }
+            val name = data.optText("name") ?: error("返回内容没有 name 字段")
+            val type = data.optText("type")
             val level = data.optInt("level", 0).takeIf { it > 0 }
             listOfNotNull(name, type, level?.let { "level $it" }).joinToString(" · ")
         }
@@ -57,15 +57,14 @@ object VideoInfoApi {
             val json = jsonObjectOf(httpGet(url))
             val record = json.optJSONArray("records")?.optJSONObject(0)
                 ?: error("没有查询到地名记录")
-            val name = record.optString("standard_name").takeIf { it.isNotBlank() }
+            val name = record.optText("standard_name")
                 ?: error("记录缺少 standard_name")
-            val type = record.optString("place_type").takeIf { it.isNotBlank() }
+            val type = record.optText("place_type")
             val region = listOf("province_name", "city_name", "area_name")
-                .mapNotNull { key -> record.optString(key).takeIf { it.isNotBlank() } }
+                .mapNotNull { key -> record.optText(key) }
                 .distinct()
                 .joinToString(" ")
-            val spelling = record.optString("roman_alphabet_spelling").trim()
-                .takeIf { it.isNotBlank() }
+            val spelling = record.optText("roman_alphabet_spelling")
             val center = record.optJSONObject("gdm")
                 ?.optJSONArray("coordinates")
                 ?.optJSONArray(0)
@@ -97,15 +96,14 @@ object VideoInfoApi {
             }
             val props = extractJsonObject(text, "properties")?.let { JSONObject(it) }
                 ?: error("返回内容没有 properties")
-            val name = props.optString("name").takeIf { it.isNotBlank() }
+            val name = props.optText("name")
                 ?: error("properties 缺少 name")
-            val codeValue = props.opt("adcode")?.toString()?.takeIf { it.isNotBlank() }
+            val codeValue = props.optText("adcode")
             val center = props.optJSONArray("center")
                 ?.takeIf { it.length() >= 2 }
                 ?.let { String.format(Locale.ROOT, "%.4f,%.4f", it.optDouble(0), it.optDouble(1)) }
-            val level = props.optString("level").takeIf { it.isNotBlank() }
-            val parent = props.optJSONObject("parent")?.opt("adcode")?.toString()
-                ?.takeIf { it.isNotBlank() }
+            val level = props.optText("level")
+            val parent = props.optJSONObject("parent")?.optText("adcode")
 
             listOfNotNull(
                 name,
@@ -188,6 +186,13 @@ object VideoInfoApi {
         } catch (e: Exception) {
             throw IllegalStateException("返回内容不是 JSON: ${snippet(text)}")
         }
+    }
+
+    /** optString 会把 JSONObject.NULL 变成字符串 "null"，这里统一当成空值 */
+    private fun JSONObject.optText(key: String): String? {
+        val value = opt(key) ?: return null
+        if (value == JSONObject.NULL) return null
+        return value.toString().trim().takeIf { it.isNotBlank() && it != "null" }
     }
 
     private fun snippet(text: String): String {

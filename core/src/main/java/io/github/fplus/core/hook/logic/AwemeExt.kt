@@ -306,7 +306,10 @@ internal fun httpGet(
         setRequestProperty("User-Agent", BROWSER_UA)
         setRequestProperty("Accept", "application/json, text/plain, */*")
         setRequestProperty("Accept-Language", "zh-CN,zh;q=0.9")
-        setRequestProperty("Referer", "https://dmfw.mca.gov.cn/")
+        // 民政部接口有 WAF，需要来源页；其它域名带上它会 403（如阿里 DataV 的边界接口）
+        if (url.contains("mca.gov.cn")) {
+            setRequestProperty("Referer", "https://dmfw.mca.gov.cn/")
+        }
         if (!cookie.isNullOrBlank()) {
             setRequestProperty("Cookie", cookie)
         }
