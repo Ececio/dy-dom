@@ -100,6 +100,13 @@ class HLongPressLayout : BaseHook() {
      */
     private var pendingLiveMenu: Pair<View, LivePreviewData>? = null
 
+    /**
+     * 普通视频长按由模块接管时，原生长按监听器会被临时摘掉，
+     * 这里保存起来，等手势结束后再放回去，避免影响后续原生行为。
+     */
+    private var savedNativeListener: Any? = null
+    private var savedNativeListenerLayout: View? = null
+
     private var aweme: Aweme? = null
 
     override fun setTargetClass(): Class<*> {
@@ -143,26 +150,38 @@ class HLongPressLayout : BaseHook() {
                 MotionEvent.ACTION_DOWN -> {
                     suppressClickUp = false
                     pendingLiveMenu = null
+                    savedNativeListener = null
+                    savedNativeListenerLayout = null
                     // 原生 runnable 会在 500ms 左右直接弹菜单/进直播间，按下时就得摘掉
                     val layout = thisObject as? View
-                    if (layout != null && config.isLongPressLive) {
-                        // 原生监听器本身持有直播 Aweme 时，直接登记为直播预览卡
-                        val listener = layout.findFieldGetValue<Any> { name("LJ") }
-                        val listenerAweme = listener?.findFieldGetValue<Aweme> {
-                            type(Aweme::class.java)
-                        }
-                        if (listenerAweme != null && listenerAweme.isLive) {
-                            val room = listener.findFieldGetValue<Any> { name("LJIIL") }
-                            synchronized(livePreviewData) {
-                                livePreviewData[layout] = LivePreviewData(room, listenerAweme)
+                    if (layout != null) {
+                        if (config.isLongPressLive) {
+                            // 原生监听器本身持有直播 Aweme 时，直接登记为直播预览卡
+                            val listener = layout.findFieldGetValue<Any> { name("LJ") }
+                            val listenerAweme = listener?.findFieldGetValue<Aweme> {
+                                type(Aweme::class.java)
+                            }
+                            if (listenerAweme != null && listenerAweme.isLive) {
+                                val room = listener.findFieldGetValue<Any> { name("LJIIL") }
+                                synchronized(livePreviewData) {
+                                    livePreviewData[layout] = LivePreviewData(room, listenerAweme)
+                                }
+                            }
+                            if (findLivePreview(layout) != null) {
+                                detachNativeLongPress(layout)
+                                return@hookBlockRunning
                             }
                         }
-                        if (findLivePreview(layout) != null) {
-                            detachNativeLongPress(layout)
+
+                        // 普通视频：本次长按如果由模块菜单接管，就先摘掉原生监听器，
+                        // 否则 500ms 时原生面板会和模块菜单一起弹出来。
+                        if (shouldShowModuleMenu(event)) {
+                            detachNativeLongPress(layout, saveForRestore = true)
                         }
                     }
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    restoreNativeLongPress(thisObject as? View)
                     if (!suppressClickUp) return@hookBlockRunning
                     suppressClickUp = false
                     val view = thisObject as? View
@@ -238,8 +257,12 @@ class HLongPressLayout : BaseHook() {
      * 摘掉 LongPressLayout 的原生长按监听器，并取消已经排队的长按 runnable。
      * 原生 runnable 会调用 LJ.onLongPressAwemeSure()，直播预览卡片上等于「进入直播间」。
      */
-    private fun detachNativeLongPress(layout: View) {
+    private fun detachNativeLongPress(layout: View, saveForRestore: Boolean = false) {
         runCatching {
+            if (saveForRestore) {
+                savedNativeListener = layout.findFieldGetValue<Any> { name("LJ") }
+                savedNativeListenerLayout = layout
+            }
             layout.findFieldSetValue(null) { name("LJ") }
             layout.findMethodInvoke<Any>(block = {
                 name("LIZIZ")
@@ -247,6 +270,33 @@ class HLongPressLayout : BaseHook() {
             })
         }.onFailure {
             XplerLog.e(it)
+        }
+    }
+
+    private fun restoreNativeLongPress(layout: View?) {
+        val listener = savedNativeListener ?: return
+        val target = savedNativeListenerLayout ?: layout ?: return
+        savedNativeListener = null
+        savedNativeListenerLayout = null
+        runCatching {
+            target.findFieldSetValue(listener) { name("LJ") }
+        }.onFailure {
+            XplerLog.e(it)
+        }
+    }
+
+    /**
+     * 这次长按是否应该由模块菜单接管（与 onLongPress 的坐标判断保持一致）。
+     */
+    private fun shouldShowModuleMenu(event: MotionEvent): Boolean {
+        if (event.x < screenSize.width / 8 || event.x > screenSize.width - screenSize.width / 8)
+            return false
+        if (!config.isNeatMode)
+            return false
+        return if (!config.longPressMode) {
+            event.y >= screenSize.height / 2
+        } else {
+            event.y <= screenSize.height / 2
         }
     }
 
@@ -283,19 +333,8 @@ class HLongPressLayout : BaseHook() {
         }
 
         // 预留出长按快进
-        if (event.x < screenSize.width / 8 || event.x > screenSize.width - screenSize.width / 8)
+        if (!shouldShowModuleMenu(event))
             return
-
-        if (!config.isNeatMode)
-            return
-
-        if (!config.longPressMode) {
-            if (event.y < screenSize.height / 2)
-                return
-        } else {
-            if (event.y > screenSize.height / 2)
-                return
-        }
 
         val holderRootView = view.firstParentOrNull(VideoViewHolderRootView::class.java) ?: return
         showOptionsMenu(holderRootView)
