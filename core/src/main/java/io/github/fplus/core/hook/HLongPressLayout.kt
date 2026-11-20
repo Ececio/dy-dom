@@ -89,6 +89,21 @@ class HLongPressLayout : BaseHook() {
         return findClass("com.ss.android.ugc.aweme.feed.ui.LongPressLayout")
     }
 
+    /**
+     * 直播预览页的原生长按监听器会直接进入直播间，注册时就不给它设置。
+     */
+    @OnBefore("setListener")
+    fun setListenerBefore(params: MethodParam) {
+        hookBlockRunning(params) {
+            val view = thisObject as? View ?: return@hookBlockRunning
+            if (!config.isLongPressLive) return@hookBlockRunning
+            if (!hasLivePlayer(view)) return@hookBlockRunning
+            setArgs(arrayOf(null))
+        }.onFailure {
+            XplerLog.e(it)
+        }
+    }
+
     @OnBefore("onTouchEvent")
     fun onTouchEventBefore(params: MethodParam, event: MotionEvent) {
         hookBlockRunning(params) {
@@ -266,9 +281,12 @@ class HLongPressLayout : BaseHook() {
         while (stack.isNotEmpty() && visited < MAX_SCAN_VIEWS) {
             val current = stack.removeLast()
             visited++
-            if (current.javaClass.name == LIVE_PLAYER) return true
+            if (current.javaClass.name == LIVE_PLAYER && current.visibility == View.VISIBLE) {
+                return true
+            }
             if (current is ViewGroup) {
-                for (i in 0 until current.childCount) {
+                // 倒序压栈，先扫靠前的子 View（直播播放器通常在第一个容器里）
+                for (i in current.childCount - 1 downTo 0) {
                     stack.addLast(current.getChildAt(i))
                 }
             }
