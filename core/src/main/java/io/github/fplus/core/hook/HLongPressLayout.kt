@@ -97,7 +97,9 @@ class HLongPressLayout : BaseHook() {
         hookBlockRunning(params) {
             val view = thisObject as? View ?: return@hookBlockRunning
             if (!config.isLongPressLive) return@hookBlockRunning
-            if (!hasLivePlayer(view)) return@hookBlockRunning
+            // 注册过直播预览的布局直接放行（部分预览卡没有 LivePlayerView）
+            val registered = synchronized(livePreviewData) { livePreviewData.containsKey(view) }
+            if (!registered && !hasLivePlayer(view)) return@hookBlockRunning
             setArgs(arrayOf(null))
         }.onFailure {
             XplerLog.e(it)
@@ -108,7 +110,14 @@ class HLongPressLayout : BaseHook() {
     fun onTouchEventBefore(params: MethodParam, event: MotionEvent) {
         hookBlockRunning(params) {
             when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> suppressClickUp = false
+                MotionEvent.ACTION_DOWN -> {
+                    suppressClickUp = false
+                    // 原生 runnable 会在 500ms 左右直接弹菜单/进直播间，按下时就得摘掉
+                    val layout = thisObject as? View
+                    if (layout != null && config.isLongPressLive && findLivePreview(layout) != null) {
+                        detachNativeLongPress(layout)
+                    }
+                }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     if (!suppressClickUp) return@hookBlockRunning
                     suppressClickUp = false
@@ -171,6 +180,22 @@ class HLongPressLayout : BaseHook() {
         }
     }
 
+    /**
+     * 摘掉 LongPressLayout 的原生长按监听器，并取消已经排队的长按 runnable。
+     * 原生 runnable 会调用 LJ.onLongPressAwemeSure()，直播预览卡片上等于「进入直播间」。
+     */
+    private fun detachNativeLongPress(layout: View) {
+        runCatching {
+            layout.findFieldSetValue(null) { name("LJ") }
+            layout.findMethodInvoke<Any>(block = {
+                name("LIZIZ")
+                parameterTypes(emptyList())
+            })
+        }.onFailure {
+            XplerLog.e(it)
+        }
+    }
+
     private fun isMoved(event: MotionEvent): Boolean {
         return Math.abs(touchDownX - event.x) > 10 || Math.abs(touchDownY - event.y) > 10
     }
@@ -196,13 +221,7 @@ class HLongPressLayout : BaseHook() {
         if (live != null) {
             if (!config.isLongPressLive) return
             // 屏蔽原生长按菜单（直播预览的原生监听器在 LongPressLayout.LJ 字段）
-            runCatching {
-                view.findFieldSetValue(null) { name("LJ") }
-                view.findMethodInvoke<Any>(block = {
-                    name("LIZIZ")
-                    parameterTypes(emptyList())
-                })
-            }
+            detachNativeLongPress(view)
             // 直播预览卡片松手会进入直播间，先把这次手势的抬起事件吃掉
             suppressClickUp = true
             showLiveOptionsMenu(view, live)
