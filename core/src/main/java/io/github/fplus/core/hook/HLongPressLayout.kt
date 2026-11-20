@@ -123,10 +123,15 @@ class HLongPressLayout : BaseHook() {
             if (!config.isLongPressLive) return@hookBlockRunning
 
             // listener 就是直播预览 widget：它自己持有当前卡片的 Aweme
+            // 反射取不到字段会抛异常，普通视频上必须安全返回，不能把整个 setListener 拦掉
             val listener = args.getOrNull(0)
-            val listenerAweme = listener?.findFieldGetValue<Aweme> { type(Aweme::class.java) }
+            val listenerAweme = runCatching {
+                listener?.findFieldGetValue<Aweme> { type(Aweme::class.java) }
+            }.getOrNull()
             if (listenerAweme != null && listenerAweme.isLive) {
-                val room = listener.findFieldGetValue<Any> { name("LJIIL") }
+                val room = runCatching {
+                    listener?.findFieldGetValue<Any> { name("LJIIL") }
+                }.getOrNull()
                 synchronized(livePreviewData) {
                     livePreviewData[view] = LivePreviewData(room, listenerAweme)
                 }
@@ -155,22 +160,29 @@ class HLongPressLayout : BaseHook() {
                     // 原生 runnable 会在 500ms 左右直接弹菜单/进直播间，按下时就得摘掉
                     val layout = thisObject as? View
                     if (layout != null) {
-                        if (config.isLongPressLive) {
+                        // 注意：反射找不到字段会抛异常，这里必须整段兜住，
+                        // 否则会跳过下面「屏蔽原生面板」的逻辑（上半屏弹原生菜单的根因）。
+                        val isLivePreview = runCatching {
+                            if (!config.isLongPressLive) return@runCatching false
                             // 原生监听器本身持有直播 Aweme 时，直接登记为直播预览卡
                             val listener = layout.findFieldGetValue<Any> { name("LJ") }
-                            val listenerAweme = listener?.findFieldGetValue<Aweme> {
-                                type(Aweme::class.java)
-                            }
+                            val listenerAweme = runCatching {
+                                listener?.findFieldGetValue<Aweme> { type(Aweme::class.java) }
+                            }.getOrNull()
                             if (listenerAweme != null && listenerAweme.isLive) {
-                                val room = listener.findFieldGetValue<Any> { name("LJIIL") }
+                                val room = runCatching {
+                                    listener?.findFieldGetValue<Any> { name("LJIIL") }
+                                }.getOrNull()
                                 synchronized(livePreviewData) {
                                     livePreviewData[layout] = LivePreviewData(room, listenerAweme)
                                 }
                             }
-                            if (findLivePreview(layout) != null) {
-                                detachNativeLongPress(layout)
-                                return@hookBlockRunning
-                            }
+                            findLivePreview(layout) != null
+                        }.getOrDefault(false)
+
+                        if (isLivePreview) {
+                            detachNativeLongPress(layout)
+                            return@hookBlockRunning
                         }
 
                         // 普通视频：本次长按如果由模块菜单接管，就先摘掉原生监听器，
@@ -791,14 +803,18 @@ class HLongPressLayout : BaseHook() {
                         val x = args[0] as Float
                         val y = args[1] as Float
 
-                        aweme = thisObject?.findFieldGetValue { type(Aweme::class.java) }
-                            ?: HVideoViewHolder.aweme
+                        // 反射找不到字段会抛异常，异常会跳过下面的 setResultVoid，
+                        // 导致普通视频上半屏的原生面板没被屏蔽，所以全部用 runCatching 兜住
+                        aweme = runCatching {
+                            thisObject?.findFieldGetValue<Aweme> { type(Aweme::class.java) }
+                        }.getOrNull() ?: HVideoViewHolder.aweme
 
                         // 直播预览卡片：原生这套长按会直接进直播间，一律拦掉。
                         // 部分「直播」Tab 卡片拿不到直播 Aweme，这里再用页面视图兜底判定。
                         if (config.isLongPressLive) {
-                            val layout = thisObject?.findFieldGetValue<View> { name("LJIIJJI") }
-                                ?: (thisObject as? View)
+                            val layout = runCatching {
+                                thisObject?.findFieldGetValue<View> { name("LJIIJJI") }
+                            }.getOrNull() ?: (thisObject as? View)
                             if (aweme?.isLive == true || (layout != null && isLivePreviewPage(layout))) {
                                 setResultVoid()
                                 return@onBefore
