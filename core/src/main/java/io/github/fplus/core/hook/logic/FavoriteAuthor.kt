@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import com.ss.android.ugc.aweme.feed.model.Aweme
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -22,6 +23,7 @@ data class FavoriteAuthor(
     val nickname: String = "",
     val signature: String = "",
     val birthday: String = "",
+    val tags: List<String>? = null,
     val avatarUrl: String = "",
     val remark: String = "",
     val addedAt: Long = 0L,
@@ -39,6 +41,10 @@ data class FavoriteAuthor(
     val douyinId: String
         get() = uniqueId.ifBlank { shortId }
 
+    /** 列表里显示的标签，例如 `#广西 #搞笑` */
+    val tagsText: String
+        get() = tags.orEmpty().joinToString(" ") { "#$it" }
+
     fun toJson(): JSONObject = JSONObject().apply {
         put("uid", uid)
         put("secUid", secUid)
@@ -47,6 +53,7 @@ data class FavoriteAuthor(
         put("nickname", nickname)
         put("signature", signature)
         put("birthday", birthday)
+        put("tags", JSONArray(tags.orEmpty()))
         put("avatarUrl", avatarUrl)
         put("remark", remark)
         put("addedAt", addedAt)
@@ -75,6 +82,27 @@ data class FavoriteAuthor(
     }
 
     companion object {
+        /** 单个作者最多保留几个标签，避免输入过长 */
+        private const val MAX_TAGS = 8
+
+        /** 单个标签最长字符数 */
+        private const val MAX_TAG_LENGTH = 16
+
+        /**
+         * 把输入框里的文本拆成标签：
+         * 支持空格、中英文逗号/分号、# 分隔，自动去空、去重、限长。
+         */
+        fun parseTags(text: String): List<String> {
+            return text.split(Regex("[\\s\\u3000,，;；#]+"))
+                .asSequence()
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .map { it.take(MAX_TAG_LENGTH) }
+                .distinct()
+                .take(MAX_TAGS)
+                .toList()
+        }
+
         /** 从视频作者信息构造收藏项；没有任何可用 ID 时返回 null */
         fun fromAweme(aweme: Aweme?): FavoriteAuthor? {
             val user = aweme?.author ?: return null
@@ -109,6 +137,13 @@ data class FavoriteAuthor(
                 nickname = json.optString("nickname"),
                 signature = json.optString("signature"),
                 birthday = json.optString("birthday"),
+                tags = json.optJSONArray("tags")?.let { array ->
+                    buildList {
+                        for (i in 0 until array.length()) {
+                            array.optString(i).takeIf { it.isNotBlank() }?.let { add(it) }
+                        }
+                    }
+                } ?: emptyList(),
                 avatarUrl = json.optString("avatarUrl"),
                 remark = json.optString("remark"),
                 addedAt = json.optLong("addedAt"),

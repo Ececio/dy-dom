@@ -230,17 +230,41 @@ class HLongPressLayout : BaseHook() {
                     showToast(view.context, "未获取到作者信息")
                     return
                 }
-                val context = view.context.applicationContext
-                singleLaunchIO("favoriteAuthor") {
-                    when (FavoriteAuthorStore.upsert(context, author)) {
-                        FavoriteAuthorStore.Result.ADDED ->
-                            showToast(context, "已收藏作者：${author.displayName}")
+                val context = view.context
+                // 先读已有的标签，弹窗里预填，方便直接修改或清空
+                singleLaunchIO("findFavoriteAuthor") {
+                    val existing = runCatching {
+                        FavoriteAuthorStore.find(context, author.key)
+                    }.getOrNull()
+                    singleLaunchMain("favoriteAuthor") {
+                        showInputDialog(
+                            context = context,
+                            title = if (existing == null) "收藏作者" else "更新收藏作者",
+                            message = "给「${author.displayName}」添加标签，可留空。" +
+                                "多个标签用空格或逗号分隔，最多 8 个；清空后保存会删除原有标签。",
+                            hint = "例如：广西 搞笑",
+                            defaultValue = existing?.tags.orEmpty().joinToString(" "),
+                            confirm = "保存",
+                            onConfirm = { text ->
+                                val tagged = author.copy(tags = FavoriteAuthor.parseTags(text))
+                                singleLaunchIO("favoriteAuthor") {
+                                    val tagSuffix = tagged.tags.orEmpty()
+                                        .takeIf { it.isNotEmpty() }
+                                        ?.joinToString("", prefix = "，标签：") { "#$it" }
+                                        .orEmpty()
+                                    when (FavoriteAuthorStore.upsert(context, tagged)) {
+                                        FavoriteAuthorStore.Result.ADDED ->
+                                            showToast(context, "已收藏作者：${tagged.displayName}$tagSuffix")
 
-                        FavoriteAuthorStore.Result.UPDATED ->
-                            showToast(context, "已更新收藏：${author.displayName}")
+                                        FavoriteAuthorStore.Result.UPDATED ->
+                                            showToast(context, "已更新收藏：${tagged.displayName}$tagSuffix")
 
-                        FavoriteAuthorStore.Result.FAILED ->
-                            showToast(context, "收藏失败，请检查存储权限")
+                                        FavoriteAuthorStore.Result.FAILED ->
+                                            showToast(context, "收藏失败，请检查存储权限")
+                                    }
+                                }
+                            },
+                        )
                     }
                 }
             }

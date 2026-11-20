@@ -283,7 +283,7 @@ class DownloadAllUserWorksLogic(
                     BatchDebug.log("第${imageIndex + 1}张图没有地址 uri=${struct.uri}")
                     return@forEachIndexed
                 }
-                val file = DownloadNaming.uniqueFile(
+                val file = File(
                     dir,
                     baseName.secureFilename("_${imageIndex + 1}.jpg"),
                 )
@@ -316,7 +316,7 @@ class DownloadAllUserWorksLogic(
             return false
         }
 
-        val file = DownloadNaming.uniqueFile(videoDir.need(), baseName.secureFilename(".mp4"))
+        val file = File(videoDir.need(), baseName.secureFilename(".mp4"))
         // 先下最清晰的那个，再读文件头判断编码；不是通用编码才去换候选
         val done = VideoCodec.downloadBest(candidates) { url ->
             downloadFile(url, file, notify, "第${index}个 %s%%") ?: run {

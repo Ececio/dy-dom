@@ -63,6 +63,8 @@ object FavoriteAuthorStore {
                 nickname = author.nickname.ifBlank { old.nickname },
                 signature = author.signature.ifBlank { old.signature },
                 birthday = author.birthday.ifBlank { old.birthday },
+                // tags 为 null 表示这次没有改标签，保留旧标签；空列表表示用户主动清空
+                tags = author.tags ?: old.tags,
                 avatarUrl = author.avatarUrl.ifBlank { old.avatarUrl },
                 remark = author.remark.ifBlank { old.remark },
                 addedAt = old.addedAt.takeIf { it > 0L } ?: now,
@@ -76,6 +78,8 @@ object FavoriteAuthorStore {
         current.add(
             0,
             author.copy(
+                // 新条目没有标签时写空数组，保证 JSON 结构统一
+                tags = author.tags ?: emptyList(),
                 addedAt = author.addedAt.takeIf { it > 0L } ?: now,
                 updatedAt = now,
             )

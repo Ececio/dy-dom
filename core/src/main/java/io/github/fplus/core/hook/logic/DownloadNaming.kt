@@ -2,7 +2,6 @@ package io.github.fplus.core.hook.logic
 
 import com.freegang.extension.pureFileName
 import io.github.fplus.core.config.ConfigV1
-import java.io.File
 
 /**
  * 下载命名规则。
@@ -38,28 +37,5 @@ object DownloadNaming {
             desc.pureFileName
         }
         return "${pureNickname}_${shortId}_${uid.orEmpty()}_${tail}"
-    }
-
-    /**
-     * 同名文件去重：`a.mp4` 已存在时依次尝试 `a_2.mp4`、`a_3.mp4`……
-     *
-     * 批量下载时不同作品可能同名（文案一模一样，或文案为空落在同一秒），
-     * 单个下载覆盖一个文件还能接受，批量覆盖就等同丢作品，所以这里加序号。
-     */
-    fun uniqueFile(parent: File, fileName: String): File {
-        val file = File(parent, fileName)
-        if (!file.exists()) return file
-
-        val dot = fileName.lastIndexOf('.')
-        val name = if (dot > 0) fileName.substring(0, dot) else fileName
-        val suffix = if (dot > 0) fileName.substring(dot) else ""
-
-        var index = 2
-        while (index < 1000) {
-            val candidate = File(parent, "${name}_${index}${suffix}")
-            if (!candidate.exists()) return candidate
-            index++
-        }
-        return file
     }
 }

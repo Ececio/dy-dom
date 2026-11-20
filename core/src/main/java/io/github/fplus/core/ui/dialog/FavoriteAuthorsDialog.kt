@@ -12,6 +12,7 @@ import androidx.compose.material.Divider
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -22,10 +23,43 @@ import androidx.compose.ui.unit.sp
 import io.github.fplus.core.hook.logic.FavoriteAuthor
 import io.github.fplus.core.ui.component.FDialog
 
+/** 一个标签分组；tag 为空表示「未分组」 */
+private data class AuthorGroup(
+    val tag: String,
+    val authors: List<FavoriteAuthor>,
+)
+
+/**
+ * 按标签分组：每个标签一个分组，一个作者有多个标签时会在多个分组里各出现一次；
+ * 没有标签的作者放进「未分组」，排在最后。
+ */
+private fun groupByTag(authors: List<FavoriteAuthor>): List<AuthorGroup> {
+    val tagged = linkedMapOf<String, MutableList<FavoriteAuthor>>()
+    val untagged = mutableListOf<FavoriteAuthor>()
+
+    authors.forEach { author ->
+        val tags = author.tags.orEmpty().distinct()
+        if (tags.isEmpty()) {
+            untagged.add(author)
+        } else {
+            tags.forEach { tag ->
+                tagged.getOrPut(tag) { mutableListOf() }.add(author)
+            }
+        }
+    }
+
+    val groups = tagged.entries
+        .sortedBy { it.key.lowercase() }
+        .map { AuthorGroup(it.key, it.value) }
+        .toMutableList()
+    if (untagged.isNotEmpty()) groups.add(AuthorGroup("", untagged))
+    return groups
+}
+
 /**
  * 收藏作者列表弹窗。
  *
- * 点击一行跳转作者主页，点右侧「删除」移除；数据来源是
+ * 按标签分组显示；点击一行跳转作者主页，点右侧「删除」移除。数据来源是
  * `Download/Freedom/favorites/authors.json`，可以直接备份或手工编辑。
  */
 @Composable
@@ -67,25 +101,34 @@ fun FavoriteAuthorsDialog(
 
             if (authors.isEmpty()) {
                 Text(
-                    text = "还没有收藏作者。\n在视频上长按，选「收藏作者」即可加入列表。",
+                    text = "还没有收藏作者。\n在视频上长按，选「收藏作者」即可加入列表，可顺便添加标签。",
                     modifier = Modifier.padding(horizontal = 24.dp, vertical = 28.dp),
                     style = MaterialTheme.typography.body1.copy(
                         color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
                     ),
                 )
             } else {
+                val groups = remember(authors) { groupByTag(authors) }
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(max = 420.dp),
                 ) {
-                    items(authors, key = { it.key }) { author ->
-                        FavoriteAuthorRow(
-                            author = author,
-                            onOpen = { onOpen(author) },
-                            onDelete = { onDelete(author) },
-                        )
-                        Divider()
+                    groups.forEach { group ->
+                        item(key = "group:${group.tag}") {
+                            GroupHeader(tag = group.tag, count = group.authors.size)
+                        }
+                        items(
+                            items = group.authors,
+                            key = { author -> "${group.tag}:${author.key}" },
+                        ) { author ->
+                            FavoriteAuthorRow(
+                                author = author,
+                                onOpen = { onOpen(author) },
+                                onDelete = { onDelete(author) },
+                            )
+                            Divider()
+                        }
                     }
                 }
             }
@@ -99,6 +142,36 @@ fun FavoriteAuthorsDialog(
                 ),
             )
         }
+    }
+}
+
+@Composable
+private fun GroupHeader(tag: String, count: Int) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = if (tag.isBlank()) "未分组" else "#$tag",
+            style = MaterialTheme.typography.body2.copy(
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (tag.isBlank()) {
+                    MaterialTheme.colors.onSurface.copy(alpha = 0.5f)
+                } else {
+                    MaterialTheme.colors.primary
+                },
+            ),
+        )
+        Text(
+            text = " $count",
+            style = MaterialTheme.typography.body2.copy(
+                fontSize = 12.sp,
+                color = MaterialTheme.colors.onSurface.copy(alpha = 0.45f),
+            ),
+        )
     }
 }
 
@@ -148,6 +221,19 @@ private fun FavoriteAuthorRow(
                 text = ids,
                 modifier = Modifier.padding(top = 2.dp),
                 style = MaterialTheme.typography.body2.copy(fontSize = 12.sp, color = muted),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+
+        if (author.tags.orEmpty().isNotEmpty()) {
+            Text(
+                text = author.tagsText,
+                modifier = Modifier.padding(top = 2.dp),
+                style = MaterialTheme.typography.body2.copy(
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colors.primary.copy(alpha = 0.8f),
+                ),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )

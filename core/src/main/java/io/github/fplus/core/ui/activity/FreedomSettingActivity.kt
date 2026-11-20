@@ -451,9 +451,9 @@ class FreedomSettingActivity : XplerActivity() {
         ClickItem(
             text = "收藏作者",
             subtext = if (count > 0) {
-                "已收藏 $count 位作者，点击查看、跳转主页或删除"
+                "已收藏 $count 位作者，列表按标签分组，点击查看、跳转主页或删除"
             } else {
-                "收藏时保存昵称、全部 ID、签名、生日，点击查看列表"
+                "收藏时可添加标签（可留空），列表按标签分组；数据保存在 authors.json"
             },
             onClick = {
                 lifecycleScope.launch {

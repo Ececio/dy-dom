@@ -19,6 +19,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.Window
 import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
 import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
@@ -33,6 +34,7 @@ import com.freegang.ktutils.app.KToastUtils
 import io.github.fplus.core.R
 import io.github.fplus.core.databinding.DialogChoiceLayoutBinding
 import io.github.fplus.core.databinding.DialogInputChoiceLayoutBinding
+import io.github.fplus.core.databinding.DialogInputLayoutBinding
 import io.github.fplus.core.databinding.DialogMessageLayoutBinding
 import io.github.fplus.core.databinding.DialogProgressLayoutBinding
 import io.github.fplus.core.ui.ModuleTheme
@@ -286,6 +288,94 @@ abstract class BaseHook : HookEntity() {
         }
         // 字段很多时（如作者/直播间信息）限制内容高度，按钮才不会被挤出屏幕
         clampScrollHeight(context, binding.messageDialogScroll, binding.messageDialogContent)
+    }
+
+    /**
+     * 单行文本输入弹窗。
+     *
+     * 用于收藏作者时填写标签这类场景：默认值会预填并全选，留空表示不设置/清空标签。
+     */
+    fun showInputDialog(
+        context: Context,
+        title: CharSequence,
+        message: CharSequence = "",
+        hint: CharSequence = "",
+        defaultValue: CharSequence = "",
+        cancel: CharSequence = "取消",
+        confirm: CharSequence = "确定",
+        onConfirm: (input: String) -> Unit,
+        onCancel: () -> Unit = {},
+        onDismiss: () -> Unit = {},
+    ) {
+        injectRes(context.resources)
+        val isDarkMode = context.isDarkMode
+        val binding = DialogInputLayoutBinding.inflate(LayoutInflater.from(context))
+
+        binding.inputDialogContainer.background = getDrawable(
+            context,
+            isDarkMode,
+            R.drawable.dialog_background_night,
+            R.drawable.dialog_background,
+        )
+
+        binding.inputDialogTitle.text = title
+        binding.inputDialogTitle.setTextColor(getTextColor(isDarkMode))
+
+        binding.inputDialogMessage.isVisible = message.isNotBlank()
+        binding.inputDialogMessage.text = message
+        binding.inputDialogMessage.setTextColor(getHintTextColor(isDarkMode))
+
+        binding.inputDialogEdit.background = getDrawable(
+            context,
+            isDarkMode,
+            R.drawable.dialog_input_background_night,
+            R.drawable.dialog_input_background,
+        )
+        binding.inputDialogEdit.hint = hint
+        binding.inputDialogEdit.setHintTextColor(getHintTextColor(isDarkMode))
+        binding.inputDialogEdit.setText(defaultValue)
+        binding.inputDialogEdit.setTextColor(getTextColor(isDarkMode))
+        binding.inputDialogEdit.setSelection(binding.inputDialogEdit.text?.length ?: 0)
+
+        binding.inputDialogCancel.background = getDrawable(
+            context,
+            isDarkMode,
+            R.drawable.dialog_cancel_button_background_night,
+            R.drawable.dialog_cancel_button_background,
+        )
+        binding.inputDialogConfirm.background = getDrawable(
+            context,
+            isDarkMode,
+            R.drawable.dialog_confirm_button_background_night,
+            R.drawable.dialog_confirm_button_background,
+        )
+        binding.inputDialogCancel.text = cancel
+        binding.inputDialogCancel.setTextColor(getTextColor(isDarkMode))
+        binding.inputDialogConfirm.text = confirm
+        binding.inputDialogConfirm.setTextColor(getTextColor(isDarkMode))
+
+        binding.inputDialogCancel.setOnClickListener {
+            popupDialog?.dismiss()
+            onCancel.invoke()
+        }
+        binding.inputDialogConfirm.setOnClickListener {
+            val input = binding.inputDialogEdit.text?.toString().orEmpty()
+            popupDialog?.dismiss()
+            onConfirm.invoke(input)
+        }
+
+        showDialog(
+            view = binding.root,
+            onDismiss = onDismiss,
+        )
+
+        // 窗口附加到屏幕后再请求焦点，否则软键盘不会弹出
+        binding.inputDialogEdit.post {
+            binding.inputDialogEdit.requestFocus()
+            val manager =
+                context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            manager?.showSoftInput(binding.inputDialogEdit, InputMethodManager.SHOW_IMPLICIT)
+        }
     }
 
     /**
