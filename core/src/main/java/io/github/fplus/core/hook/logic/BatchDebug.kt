@@ -1,6 +1,7 @@
 package io.github.fplus.core.hook.logic
 
 import android.content.Context
+import android.os.Environment
 import io.github.fplus.core.config.ConfigV1
 import java.io.File
 import java.text.SimpleDateFormat
@@ -140,9 +141,10 @@ object BatchDebug {
     }
 
     private fun openCodecFile(): File? {
-        val context = currentApplication() ?: return null
+        // 拿不到宿主 Context 时直接按公共下载目录兜底，避免单个下载完全没有日志
+        val dir = currentApplication()?.let { ConfigV1.getFreedomDir(it) }
+            ?: File(Environment.getExternalStorageDirectory(), "Download/Freedom")
         return runCatching {
-            val dir = ConfigV1.getFreedomDir(context)
             if (!dir.exists()) dir.mkdirs()
             File(dir, CODEC_FILE_NAME).also { codecFile = it }
         }.onFailure {

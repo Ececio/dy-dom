@@ -442,21 +442,43 @@ class DownloadLogic(
         progressText: String,
     ): File? {
         return withContext(Dispatchers.IO) {
-            KHttpUtils.download(
+            // 先下到隐藏的 .tmp 目录，成功后再改名到目标路径。
+            // 这样既能避免半截文件被当成有效视频，也能绕开直接覆盖时偶发的 EEXIST。
+            val tmpDir = File(downloadFile.parentFile, ".tmp")
+            if (!tmpDir.exists()) tmpDir.mkdirs()
+            val tmp = File(tmpDir, downloadFile.name)
+            if (tmp.exists()) tmp.delete()
+
+            val got = KHttpUtils.download(
                 sourceUrl = url,
-                file = downloadFile,
+                file = tmp,
             ) { real, total, e ->
                 if (e != null) {
                     XplerLog.e(e)
                     BatchDebug.codec("download error ${e.javaClass.simpleName}: ${e.message}")
                 }
 
-                if (notify is KNotifiUtils.ProgressNotification) { // 通知栏在ui线程中刷新会造成ui卡顿, 排查了一下午, 麻了
-                    notify.notifyProgress((real * 100 / total).toInt(), progressText)
-                } else {
-                    hook.refresh { notify.notifyProgress((real * 100 / total).toInt(), progressText) }
+                if (total > 0) {
+                    val step = (real * 100 / total).toInt()
+                    if (notify is KNotifiUtils.ProgressNotification) { // 通知栏在ui线程中刷新会造成ui卡顿, 排查了一下午, 麻了
+                        notify.notifyProgress(step, progressText)
+                    } else {
+                        hook.refresh { notify.notifyProgress(step, progressText) }
+                    }
                 }
             }
+
+            if (got == null) {
+                tmp.delete()
+                return@withContext null
+            }
+
+            val target = if (got.extension.isEmpty()) {
+                downloadFile
+            } else {
+                File(downloadFile.parentFile, downloadFile.nameWithoutExtension + "." + got.extension)
+            }
+            if (moveTo(got, target)) target else null
         }
     }
 
@@ -479,4 +501,18 @@ class DownloadLogic(
 /** 下载失败可能在磁盘上留下 0 字节文件，清理掉再试下一个地址 */
 private fun File.deleteIfEmpty() {
     if (exists() && length() <= 0L) delete()
+}
+
+/** 把临时文件移动到目标路径；先删同名旧文件，改名失败时退回复制 */
+private fun moveTo(source: File, target: File): Boolean {
+    if (source.absolutePath == target.absolutePath) return true
+    if (target.exists()) target.delete()
+    if (source.renameTo(target)) return true
+    return runCatching {
+        source.inputStream().use { input ->
+            target.outputStream().use { output -> input.copyTo(output) }
+        }
+        source.delete()
+        true
+    }.getOrDefault(false)
 }

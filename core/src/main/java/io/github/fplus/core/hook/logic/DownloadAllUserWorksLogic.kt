@@ -338,9 +338,15 @@ class DownloadAllUserWorksLogic(
         notify: IProgressNotification,
         progressText: String,
     ): File? = withContext(Dispatchers.IO) {
-        KHttpUtils.download(
+        // 先下到隐藏的 .tmp 目录，成功后再改名，避免留下半截文件或直接覆盖时的 EEXIST
+        val tmpDir = File(file.parentFile, ".tmp")
+        if (!tmpDir.exists()) tmpDir.mkdirs()
+        val tmp = File(tmpDir, file.name)
+        if (tmp.exists()) tmp.delete()
+
+        val got = KHttpUtils.download(
             sourceUrl = url,
-            file = file,
+            file = tmp,
         ) { real, total, e ->
             if (e != null) {
                 XplerLog.e(e)
@@ -355,6 +361,32 @@ class DownloadAllUserWorksLogic(
                 }
             }
         }
+
+        if (got == null) {
+            tmp.delete()
+            return@withContext null
+        }
+
+        val target = if (got.extension.isEmpty()) {
+            file
+        } else {
+            File(file.parentFile, file.nameWithoutExtension + "." + got.extension)
+        }
+        if (moveToFile(got, target)) target else null
+    }
+
+    /** 暂存文件改名到正式路径，失败时退回复制 */
+    private fun moveToFile(source: File, target: File): Boolean {
+        if (source.absolutePath == target.absolutePath) return true
+        if (target.exists()) target.delete()
+        if (source.renameTo(target)) return true
+        return runCatching {
+            source.inputStream().use { input ->
+                target.outputStream().use { output -> input.copyTo(output) }
+            }
+            source.delete()
+            true
+        }.getOrDefault(false)
     }
 
     /**
