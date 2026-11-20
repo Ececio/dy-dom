@@ -1,6 +1,8 @@
 package io.github.fplus.core.ui.activity
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import androidx.compose.animation.core.animateFloatAsState
@@ -280,6 +282,7 @@ class FreedomSettingActivity : XplerActivity() {
         ) {
             item { DownloadItem() }
             item { FavoriteAuthorsItem() }
+            item { UidJumpItem() }
             item { VideoInfoInterfacesItem() }
             item { SaveEmojiItem() }
             item { TranslucentItem() }
@@ -517,6 +520,90 @@ class FreedomSettingActivity : XplerActivity() {
             VideoInfoInterfacesDialog(
                 onDismiss = { showDialog = false },
             )
+        }
+    }
+
+    @Composable
+    private fun UidJumpItem() {
+        var showDialog by remember { mutableStateOf(false) }
+        var uid by remember { mutableStateOf("") }
+
+        ClickItem(
+            text = "UID 跳转用户主页",
+            subtext = "手动输入用户 UID，直接打开对应作者主页",
+            onClick = {
+                uid = ""
+                showDialog = true
+            },
+        )
+
+        if (showDialog) {
+            FMessageDialog(
+                title = "UID 跳转用户主页",
+                cancel = "取消",
+                confirm = "跳转",
+                onCancel = { showDialog = false },
+                onConfirm = {
+                    val value = uid.trim()
+                    if (value.isBlank()) {
+                        KToastUtils.show(application, "请输入 UID")
+                    } else {
+                        val opened = runCatching {
+                            startActivity(
+                                Intent(
+                                    Intent.ACTION_VIEW,
+                                    Uri.parse("snssdk1128://user/profile/$value"),
+                                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            )
+                            true
+                        }.getOrDefault(false)
+                        if (opened) {
+                            showDialog = false
+                        } else {
+                            KToastUtils.show(application, "无法打开用户主页，请确认抖音已安装")
+                        }
+                    }
+                },
+            ) {
+                Column {
+                    Text(
+                        text = "输入纯数字 UID，可直接粘贴从「作者信息」里复制的 UID。",
+                        style = MaterialTheme.typography.body2.copy(
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
+                        ),
+                    )
+                    FCard(
+                        modifier = Modifier.padding(top = 8.dp),
+                        border = FCardBorder(borderWidth = 1.0.dp),
+                    ) {
+                        BasicTextField(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            value = uid,
+                            maxLines = 1,
+                            singleLine = true,
+                            textStyle = MaterialTheme.typography.body1,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            decorationBox = { innerTextField ->
+                                if (uid.isEmpty()) {
+                                    Text(
+                                        text = "例如 109116618159",
+                                        style = MaterialTheme.typography.body1.copy(
+                                            color = Color(0xFF999999),
+                                        ),
+                                    )
+                                }
+                                innerTextField()
+                            },
+                            onValueChange = { value ->
+                                uid = value.filter { it.isDigit() }.take(20)
+                            },
+                        )
+                    }
+                }
+            }
         }
     }
 

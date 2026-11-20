@@ -44,6 +44,14 @@
                 android:textSize="14sp" />
         </ScrollView>
 
+        <!-- 额外操作按钮，例如作者信息弹窗里的多个复制项；默认隐藏 -->
+        <LinearLayout
+            android:id="@+id/messageDialogActions"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone" />
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

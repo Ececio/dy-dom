@@ -271,13 +271,41 @@ class HLongPressLayout : BaseHook() {
 
             "获取作者信息" -> {
                 singleLaunchMain("$item") {
-                    val msg = aweme?.authorInfoText() ?: "未知"
+                    val target = aweme
+                    val msg = target?.authorInfoText() ?: "未知"
+                    val author = FavoriteAuthor.fromAweme(target)
+                    val uid = author?.uid.orEmpty()
+                    val secUid = author?.secUid.orEmpty()
+                    val context = view.context
+                    val homeUrl = "https://www.douyin.com/user/$secUid"
+
                     showMessageDialog(
-                        context = view.context,
+                        context = context,
                         title = "作者信息",
                         content = msg,
-                        copyText = msg,
                         singleButton = true,
+                        actions = listOf(
+                            "复制主要信息" to {
+                                copyToClipboard(context, "作者信息", msg)
+                                showToast(context, "已复制作者信息")
+                            },
+                            "复制 UID" to {
+                                if (uid.isBlank()) {
+                                    showToast(context, "没有获取到 UID")
+                                } else {
+                                    copyToClipboard(context, "UID", uid)
+                                    showToast(context, "已复制 UID：$uid")
+                                }
+                            },
+                            "复制主页链接" to {
+                                if (secUid.isBlank()) {
+                                    showToast(context, "作者信息里没有 secUid")
+                                } else {
+                                    copyToClipboard(context, "主页链接", homeUrl)
+                                    showToast(context, "已复制主页链接")
+                                }
+                            },
+                        ),
                     )
                 }
             }

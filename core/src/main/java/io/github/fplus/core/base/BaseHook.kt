@@ -20,6 +20,7 @@ import android.view.ViewGroup
 import android.view.Window
 import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
+import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
@@ -194,6 +195,7 @@ abstract class BaseHook : HookEntity() {
         cancel: CharSequence = "取消",
         confirm: CharSequence = "确定",
         copyText: CharSequence? = null, // 不为空时显示"复制"按钮
+        actions: List<Pair<CharSequence, () -> Unit>> = emptyList(), // 额外按钮，纵向排列在内容下方
         singleButton: Boolean = false, // 只会响应 onConfirm 方法
         onConfirm: () -> Unit = {},
         onCancel: () -> Unit = {},
@@ -261,9 +263,37 @@ abstract class BaseHook : HookEntity() {
         copyText?.let { text ->
             binding.messageDialogCopy.setTextColor(getTextColor(isDarkMode))
             binding.messageDialogCopy.setOnClickListener {
-                val manager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                manager.setPrimaryClip(ClipData.newPlainText(title, text))
+                copyToClipboard(context, title, text)
                 showToast(context, "已复制")
+            }
+        }
+
+        binding.messageDialogActions.isVisible = actions.isNotEmpty()
+        if (actions.isNotEmpty()) {
+            val density = context.resources.displayMetrics.density
+            binding.messageDialogActions.removeAllViews()
+            actions.forEach { (label, action) ->
+                val button = TextView(context).apply {
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                    )
+                    gravity = Gravity.CENTER
+                    setPadding(0, (10 * density).toInt(), 0, (10 * density).toInt())
+                    text = label
+                    textSize = 14f
+                    setTextColor(Color.parseColor("#FFEDA664"))
+                    background = getDrawable(
+                        context,
+                        isDarkMode,
+                        R.drawable.dialog_action_background_night,
+                        R.drawable.dialog_action_background,
+                    )
+                    isClickable = true
+                    isFocusable = true
+                    setOnClickListener { action.invoke() }
+                }
+                binding.messageDialogActions.addView(button)
             }
         }
         val windowDialog = if (windowMode) createWindowDialog(context, binding.root) else null
@@ -287,7 +317,17 @@ abstract class BaseHook : HookEntity() {
             )
         }
         // 字段很多时（如作者/直播间信息）限制内容高度，按钮才不会被挤出屏幕
-        clampScrollHeight(context, binding.messageDialogScroll, binding.messageDialogContent)
+        clampScrollHeight(
+            context,
+            binding.messageDialogScroll,
+            binding.messageDialogContent,
+            ratio = if (actions.isEmpty()) 0.55f else 0.40f,
+        )
+    }
+
+    fun copyToClipboard(context: Context, label: CharSequence, text: CharSequence) {
+        val manager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        manager.setPrimaryClip(ClipData.newPlainText(label, text))
     }
 
     /**
