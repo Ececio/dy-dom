@@ -70,10 +70,35 @@ class HLongPressLayout : BaseHook() {
 
     private var longPressRunnable: Runnable? = null
 
+    /**
+     * 直播预览卡片长按弹出菜单后，松手会被原生点击事件当成「进入直播间」。
+     * 这里记一个标记，在下一次 ACTION_UP/ACTION_CANCEL 时消费掉事件。
+     */
+    private var suppressClickUp = false
+
     private var aweme: Aweme? = null
 
     override fun setTargetClass(): Class<*> {
         return findClass("com.ss.android.ugc.aweme.feed.ui.LongPressLayout")
+    }
+
+    @OnBefore("onTouchEvent")
+    fun onTouchEventBefore(params: MethodParam, event: MotionEvent) {
+        hookBlockRunning(params) {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> suppressClickUp = false
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (!suppressClickUp) return@hookBlockRunning
+                    suppressClickUp = false
+                    // 原生 onTouchEvent 不再执行，手动复位按压态
+                    (thisObject as? View)?.isPressed = false
+                    // 直接返回 true，跳过原生的点击/上滑处理，避免进入直播间
+                    setResult(true)
+                }
+            }
+        }.onFailure {
+            XplerLog.e(it)
+        }
     }
 
     @OnAfter("onTouchEvent")
@@ -148,6 +173,8 @@ class HLongPressLayout : BaseHook() {
         val live = findLivePreview(view)
         if (live != null) {
             if (!config.isLongPressLive) return
+            // 直播预览卡片松手会进入直播间，先把这次手势的抬起事件吃掉
+            suppressClickUp = true
             showLiveOptionsMenu(view, live)
             return
         }
