@@ -1603,7 +1603,7 @@ class FreedomSettingActivity : XplerActivity() {
     private fun LongPressLiveItem() {
         SwitchItem(
             text = "长按直播上半部分",
-            subtext = "长按直播间上半部分弹出菜单, 可查看当前直播间信息",
+            subtext = "长按直播间上半部分，或在信息流长按直播预览卡片，可查看直播间信息（无需进入直播间）",
             checked = model.isLongPressLive.observeAsState(false),
             onCheckedChange = {
                 model.changeIsLongPressLive(it)

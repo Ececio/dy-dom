@@ -34,6 +34,51 @@ object LiveRoomInfo {
         }
     }
 
+    /**
+     * 用已经拿到的 Room 对象格式化，供信息流直播预览使用（不需要先进入直播间）。
+     */
+    fun formatRoom(room: Any?): String {
+        if (room == null) {
+            return "未获取到直播间信息\n\n直播间数据尚未加载完成，可以稍后再试。"
+        }
+        return try {
+            roomText(room)
+        } catch (e: Throwable) {
+            "获取直播间信息失败: ${e.javaClass.simpleName}: ${e.message}"
+        }
+    }
+
+    /**
+     * 从信息流 Aweme 里取直播间数据。
+     *
+     * Aweme#getLiveRoom() 返回的可能是 FlexModel 包装对象，
+     * 真实的 Room 需要再调用一次 getFlexInstance() 才能拿到。
+     */
+    fun formatFromAweme(aweme: Any?): String {
+        return formatRoom(roomFromAweme(aweme))
+    }
+
+    private fun roomFromAweme(aweme: Any?): Any? {
+        if (aweme == null) return null
+
+        val raw = invokeNoArg(aweme, "getLiveRoom")
+            ?: field(aweme, "liveRoom")
+            ?: field(aweme, "mRoomFeedCellStruct")?.let { field(it, "rawRoom") }
+            ?: return null
+
+        return unwrapFlex(raw)
+    }
+
+    private fun unwrapFlex(value: Any?): Any? {
+        var current = value ?: return null
+        repeat(4) {
+            val next = invokeNoArg(current, "getFlexInstance") ?: return current
+            if (next === current) return current
+            current = next
+        }
+        return current
+    }
+
     private fun currentRoom(loader: ClassLoader): Any? {
         val outer = liveOuterService(loader) ?: return null
         val live = invokeNoArg(outer, "getLive") ?: invokeNoArg(outer, "LJIIL") ?: return null

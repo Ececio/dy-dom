@@ -12,6 +12,7 @@ import androidx.core.view.isVisible
 import com.freegang.extension.activeActivity
 import com.freegang.extension.asOrNull
 import com.freegang.extension.findFieldGetValue
+import com.freegang.extension.findFieldSetValue
 import com.freegang.extension.firstParentOrNull
 import com.freegang.extension.forEachChild
 import com.freegang.extension.isDarkMode
@@ -28,6 +29,7 @@ import io.github.fplus.core.hook.logic.DownloadAllUserWorksLogic
 import io.github.fplus.core.hook.logic.DownloadLogic
 import io.github.fplus.core.hook.logic.FavoriteAuthor
 import io.github.fplus.core.hook.logic.FavoriteAuthorStore
+import io.github.fplus.core.hook.logic.LiveRoomInfo
 import io.github.fplus.core.hook.logic.authorInfoText
 import io.github.fplus.core.hook.logic.videoInfoText
 import io.github.fplus.core.ui.activity.FreedomSettingActivity
@@ -37,9 +39,23 @@ import io.github.xpler.core.hookClass
 import io.github.xpler.core.lparam
 import io.github.xpler.core.proxy.MethodParam
 import io.github.xpler.core.thisView
+import java.util.WeakHashMap
 
 
 class HLongPressLayout : BaseHook() {
+    companion object {
+        /**
+         * 信息流直播预览卡片：LongPressLayout -> 当前卡片数据。
+         * 用弱引用 key，卡片回收后自动清理。
+         */
+        private val livePreviewData = WeakHashMap<View, LivePreviewData>()
+
+        private data class LivePreviewData(
+            val room: Any?,
+            val aweme: Any?,
+        )
+    }
+
     private val config
         get() = ConfigV1.get()
 
@@ -128,6 +144,14 @@ class HLongPressLayout : BaseHook() {
     }
 
     private fun onLongPress(view: View, event: MotionEvent) {
+        // 信息流里的直播预览卡片没有 VideoViewHolderRootView，单独处理
+        val live = findLivePreview(view)
+        if (live != null) {
+            if (!config.isLongPressLive) return
+            showLiveOptionsMenu(view, live)
+            return
+        }
+
         // 预留出长按快进
         if (event.x < screenSize.width / 8 || event.x > screenSize.width - screenSize.width / 8)
             return
@@ -145,6 +169,85 @@ class HLongPressLayout : BaseHook() {
 
         val holderRootView = view.firstParentOrNull(VideoViewHolderRootView::class.java) ?: return
         showOptionsMenu(holderRootView)
+    }
+
+    private fun registerLivePreview(widget: Any) {
+        runCatching {
+            val layout = widget.findFieldGetValue<View> { name("LJIIJJI") }
+                ?: return
+            val room = widget.findFieldGetValue<Any> { name("LJIIL") }
+            val aweme = widget.findFieldGetValue<Any> { name("LJIILIIL") }
+            synchronized(livePreviewData) {
+                livePreviewData[layout] = LivePreviewData(room, aweme)
+            }
+            if (config.isLongPressLive) {
+                // 原生长按监听器在 LongPressLayout.LJ 字段
+                layout.findFieldSetValue(null) { name("LJ") }
+            }
+        }.onFailure {
+            XplerLog.e(it)
+        }
+    }
+
+    /**
+     * 判断当前长按的 LongPressLayout 是否属于直播预览卡片。
+     *
+     * 优先用 LivePreviewGestureWidget 注册的数据（能精确对应到卡片），
+     * 注册失败时退回当前页面的 Aweme，只要它是直播也算。
+     */
+    private fun findLivePreview(view: View): LivePreviewData? {
+        synchronized(livePreviewData) {
+            livePreviewData[view]?.let { return it }
+        }
+
+        val aweme = HVerticalViewPager.currentAweme ?: return null
+        if (!aweme.isLive) return null
+        return LivePreviewData(room = null, aweme = aweme)
+    }
+
+    private fun showLiveOptionsMenu(view: View, data: LivePreviewData) {
+        val items = mutableListOf("直播间信息")
+        if (!config.isDisablePlugin) {
+            items.add("模块设置")
+        }
+
+        showChoiceDialog(
+            context = view.context,
+            title = "Freedom+",
+            items = items.toTypedArray(),
+            onChoice = { _, item, _ ->
+                when (item) {
+                    "直播间信息" -> {
+                        singleLaunchMain("feedLiveRoomInfo") {
+                            val room = data.room
+                            val msg = if (room != null) {
+                                LiveRoomInfo.formatRoom(room)
+                            } else {
+                                LiveRoomInfo.formatFromAweme(data.aweme ?: HVerticalViewPager.currentAweme)
+                            }
+                            showMessageDialog(
+                                context = view.context,
+                                title = "直播间信息",
+                                content = msg,
+                                copyText = msg,
+                                singleButton = true,
+                            )
+                        }
+                    }
+
+                    "模块设置" -> {
+                        val intent = Intent().setClass(view.context, FreedomSettingActivity::class.java)
+                        intent.putExtra("isDark", view.context.isDarkMode)
+                        val options = ActivityOptions.makeCustomAnimation(
+                            activeActivity,
+                            android.R.anim.slide_in_left,
+                            android.R.anim.slide_out_right
+                        )
+                        view.context.startActivity(intent, options.toBundle())
+                    }
+                }
+            },
+        )
     }
 
     private fun showOptionsMenu(view: ViewGroup) {
@@ -448,6 +551,29 @@ class HLongPressLayout : BaseHook() {
     }
 
     override fun onInit() {
+
+        // 信息流直播预览：记录卡片对应的 Room/Aweme，并屏蔽原生「不感兴趣」长按菜单
+        runCatching {
+            val clazz = findClass("com.ss.android.ugc.aweme.feed.widget.LivePreviewGestureWidget")
+
+            // widget 创建时先拿到 LongPressLayout，并清掉原生监听器
+            lparam.hookClass(clazz)
+                .method("LJIJJLI") {
+                    onAfter {
+                        thisObject?.let { registerLivePreview(it) }
+                    }
+                }
+
+            // 每次绑定 Aweme 时刷新 Room/Aweme，保证长按时拿到的是当前卡片
+            lparam.hookClass(clazz)
+                .method("LIZ", Aweme::class.java) {
+                    onAfter {
+                        thisObject?.let { registerLivePreview(it) }
+                    }
+                }
+        }.onFailure {
+            XplerLog.e(it)
+        }
 
         // 长按菜单事件拦截
         DexkitBuilder.longPressEventClazz?.also {
