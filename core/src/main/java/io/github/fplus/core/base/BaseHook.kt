@@ -370,12 +370,14 @@ abstract class BaseHook : HookEntity() {
         )
 
         // 窗口附加到屏幕后再请求焦点，否则软键盘不会弹出
-        binding.inputDialogEdit.post {
+        binding.inputDialogEdit.requestFocus()
+        binding.inputDialogEdit.postDelayed({
+            if (!binding.inputDialogEdit.isAttachedToWindow) return@postDelayed
             binding.inputDialogEdit.requestFocus()
             val manager =
                 context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
             manager?.showSoftInput(binding.inputDialogEdit, InputMethodManager.SHOW_IMPLICIT)
-        }
+        }, 300L)
     }
 
     /**

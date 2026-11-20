@@ -27,14 +27,22 @@ object DownloadNaming {
     }
 
     /**
-     * 不含后缀的文件名：`昵称_账号_账号ID_文案`，文案为空时用时间戳。
+     * 不含后缀的文件名：`昵称_账号_账号ID_文案`。
+     * 文案为空时用作品 ID（[fallbackId]）代替，保证同一个作品每次下载名字相同、可以同名覆盖；
+     * 拿不到作品 ID 时才退回时间戳。
      */
-    fun fileName(nickname: String?, shortId: String, uid: String?, desc: String?): String {
+    fun fileName(
+        nickname: String?,
+        shortId: String,
+        uid: String?,
+        desc: String?,
+        fallbackId: String? = null,
+    ): String {
         val pureNickname = nickname.orEmpty().pureFileName
-        val tail = if (desc.isNullOrBlank()) {
-            "${System.currentTimeMillis() / 1000}"
-        } else {
-            desc.pureFileName
+        val tail = when {
+            !desc.isNullOrBlank() -> desc.pureFileName
+            !fallbackId.isNullOrBlank() -> fallbackId
+            else -> "${System.currentTimeMillis() / 1000}"
         }
         return "${pureNickname}_${shortId}_${uid.orEmpty()}_${tail}"
     }

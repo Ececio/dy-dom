@@ -88,7 +88,7 @@ class DownloadAllUserWorksLogic(
             append("\n作品数: ").append(if (awemeCount > 0) awemeCount else "未知（开始后自动统计）")
             append("\n视频保存到: ").append(videoDir.path)
             append("\n图片保存到: ").append(imageDir.path)
-            append("\n\n视频保存为 mp4，图文按图片逐张保存；文件名与单个作品下载一致。")
+            append("\n\n视频保存为 mp4，图文按图片逐张保存；文件名与单个作品下载一致，同名文件直接覆盖。")
             if (config.isWebDav) append("\n本功能不会自动上传 WebDav。")
         }
 
@@ -262,7 +262,7 @@ class DownloadAllUserWorksLogic(
     }
 
     private suspend fun downloadAweme(item: Aweme, notify: IProgressNotification, index: Int): Boolean {
-        val baseName = DownloadNaming.fileName(nickname, shortId, uid, item.desc)
+        val baseName = DownloadNaming.fileName(nickname, shortId, uid, item.desc, item.aid)
 
         val images = item.getImageUrlList()
         XplerLog.d(

@@ -66,7 +66,13 @@ class DownloadLogic(
                 mImageParent = ConfigV1.getFreedomDir(context).child("picture")
 
                 // 构建文件名
-                mPureFileName = DownloadNaming.fileName(aweme.author.nickname, mShortId, aweme.author.uid, aweme.desc)
+                mPureFileName = DownloadNaming.fileName(
+                    nickname = aweme.author.nickname,
+                    shortId = mShortId,
+                    uid = aweme.author.uid,
+                    desc = aweme.desc,
+                    fallbackId = aweme.aid,
+                )
                 showChoiceDialog(aweme)
             } else {
                 hook.showToast(context, "未获取到基本信息")
