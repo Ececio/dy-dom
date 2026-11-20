@@ -83,6 +83,12 @@ class HLongPressLayout : BaseHook() {
      */
     private var suppressClickUp = false
 
+    /**
+     * 长按直播预览卡片时先记下要弹的菜单，等松手后再弹。
+     * 按住中途弹窗会被同一次手势的抬起事件点到菜单项上。
+     */
+    private var pendingLiveMenu: Pair<View, LivePreviewData>? = null
+
     private var aweme: Aweme? = null
 
     override fun setTargetClass(): Class<*> {
@@ -125,19 +131,41 @@ class HLongPressLayout : BaseHook() {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     suppressClickUp = false
+                    pendingLiveMenu = null
                     // 原生 runnable 会在 500ms 左右直接弹菜单/进直播间，按下时就得摘掉
                     val layout = thisObject as? View
-                    if (layout != null && config.isLongPressLive && findLivePreview(layout) != null) {
-                        detachNativeLongPress(layout)
+                    if (layout != null && config.isLongPressLive) {
+                        // 原生监听器本身持有直播 Aweme 时，直接登记为直播预览卡
+                        val listener = layout.findFieldGetValue<Any> { name("LJ") }
+                        val listenerAweme = listener?.findFieldGetValue<Aweme> {
+                            type(Aweme::class.java)
+                        }
+                        if (listenerAweme != null && listenerAweme.isLive) {
+                            val room = listener.findFieldGetValue<Any> { name("LJIIL") }
+                            synchronized(livePreviewData) {
+                                livePreviewData[layout] = LivePreviewData(room, listenerAweme)
+                            }
+                        }
+                        if (findLivePreview(layout) != null) {
+                            detachNativeLongPress(layout)
+                        }
                     }
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     if (!suppressClickUp) return@hookBlockRunning
                     suppressClickUp = false
+                    val view = thisObject as? View
                     // 原生 onTouchEvent 不再执行，手动复位按压态
-                    (thisObject as? View)?.isPressed = false
+                    view?.isPressed = false
                     // 直接返回 true，跳过原生的点击/上滑处理，避免进入直播间
                     setResult(true)
+                    // 松手后才弹菜单
+                    val pending = pendingLiveMenu
+                    pendingLiveMenu = null
+                    if (pending != null && event.actionMasked == MotionEvent.ACTION_UP) {
+                        val (target, data) = pending
+                        handler.post { showLiveOptionsMenu(target, data) }
+                    }
                 }
             }
         }.onFailure {
@@ -148,10 +176,12 @@ class HLongPressLayout : BaseHook() {
     @OnAfter("onTouchEvent")
     fun onTouchEventAfter(params: MethodParam, event: MotionEvent) {
         hookBlockRunning(params) {
-            longPressRunnable = longPressRunnable ?: Runnable { onLongPress(thisView, event) }
-
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
+                    // 每次按下都重新建 runnable，避免沿用上一次手势的 View/坐标
+                    val view = thisView
+                    val downEvent = MotionEvent.obtain(event)
+                    longPressRunnable = Runnable { onLongPress(view, downEvent) }
                     longPressRunnable?.let { handler.postDelayed(it, LONG_PRESS_TIME.toLong()) }
                     touchDownX = event.x
                     touchDownY = event.y
@@ -235,9 +265,9 @@ class HLongPressLayout : BaseHook() {
             if (!config.isLongPressLive) return
             // 屏蔽原生长按菜单（直播预览的原生监听器在 LongPressLayout.LJ 字段）
             detachNativeLongPress(view)
-            // 直播预览卡片松手会进入直播间，先把这次手势的抬起事件吃掉
+            // 松手会进入直播间，先吃掉抬起事件；菜单等松手后再弹
             suppressClickUp = true
-            showLiveOptionsMenu(view, live)
+            pendingLiveMenu = view to live
             return
         }
 
