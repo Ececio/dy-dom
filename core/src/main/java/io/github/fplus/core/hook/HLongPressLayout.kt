@@ -97,6 +97,19 @@ class HLongPressLayout : BaseHook() {
         hookBlockRunning(params) {
             val view = thisObject as? View ?: return@hookBlockRunning
             if (!config.isLongPressLive) return@hookBlockRunning
+
+            // listener 就是直播预览 widget：它自己持有当前卡片的 Aweme
+            val listener = args.getOrNull(0)
+            val listenerAweme = listener?.findFieldGetValue<Aweme> { type(Aweme::class.java) }
+            if (listenerAweme != null && listenerAweme.isLive) {
+                val room = listener.findFieldGetValue<Any> { name("LJIIL") }
+                synchronized(livePreviewData) {
+                    livePreviewData[view] = LivePreviewData(room, listenerAweme)
+                }
+                setArgs(arrayOf(null))
+                return@hookBlockRunning
+            }
+
             // 注册过直播预览的布局直接放行（部分预览卡没有 LivePlayerView）
             val registered = synchronized(livePreviewData) { livePreviewData.containsKey(view) }
             if (!registered && !hasLivePlayer(view)) return@hookBlockRunning
@@ -695,11 +708,17 @@ class HLongPressLayout : BaseHook() {
                         val x = args[0] as Float
                         val y = args[1] as Float
 
-                        if (!config.isNeatMode)
-                            return@onBefore
-
                         aweme = thisObject?.findFieldGetValue { type(Aweme::class.java) }
                             ?: HVideoViewHolder.aweme
+
+                        // 直播预览卡片：原生这套长按会直接进直播间，一律拦掉
+                        if (config.isLongPressLive && aweme?.isLive == true) {
+                            setResultVoid()
+                            return@onBefore
+                        }
+
+                        if (!config.isNeatMode)
+                            return@onBefore
 
                         if (config.longPressMode) {
                             if (y < screenSize.height / 2)
