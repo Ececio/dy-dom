@@ -21,17 +21,50 @@ object LiveRoomInfo {
 
     private const val UNKNOWN = "未知"
 
-    fun format(loader: ClassLoader): String {
+    /**
+     * 直播间信息文本 + 可直接复制/打开的直播间链接。
+     */
+    data class Data(val text: String, val link: String?)
+
+    fun format(loader: ClassLoader): String = read(loader).text
+
+    fun read(loader: ClassLoader): Data {
         return try {
             val room = currentRoom(loader)
             if (room == null) {
-                "未获取到直播间信息\n\n可能还没进入直播间，或直播间数据尚未加载完成。"
+                Data(
+                    text = "未获取到直播间信息\n\n可能还没进入直播间，或直播间数据尚未加载完成。",
+                    link = null,
+                )
             } else {
-                roomText(room)
+                val link = roomLink(room)
+                Data(text = roomText(room, link), link = link)
             }
         } catch (e: Throwable) {
-            "获取直播间信息失败: ${e.javaClass.simpleName}: ${e.message}"
+            Data(
+                text = "获取直播间信息失败: ${e.javaClass.simpleName}: ${e.message}",
+                link = null,
+            )
         }
+    }
+
+    /**
+     * live.douyin.com 的直播间链接使用主播短 ID（短 ID 即网页的 web_rid）。
+     * 例如 live.douyin.com/43143562737 会跳转到该主播当前直播间。
+     * 短 ID 缺失时退回 webcast reflow 链接（roomId + sec_user_id 同样可打开）。
+     */
+    private fun roomLink(room: Any): String? {
+        val owner = field(room, "owner")
+        val shortId = field(owner, "shortId") as? Long ?: 0L
+        if (shortId > 0L) return "https://live.douyin.com/$shortId"
+
+        val id = field(room, "id") as? Long ?: 0L
+        val idStr = (field(room, "idStr") as? String)?.takeIf { it.isNotBlank() }
+            ?: id.takeIf { it > 0L }?.toString()
+            ?: return null
+        val secUid = (field(owner, "secUid") as? String).orEmpty()
+        if (secUid.isBlank()) return null
+        return "https://webcast.amemv.com/douyin/webcast/reflow/$idStr?sec_user_id=$secUid"
     }
 
     private fun currentRoom(loader: ClassLoader): Any? {
@@ -121,7 +154,7 @@ object LiveRoomInfo {
         return null
     }
 
-    private fun roomText(room: Any): String {
+    private fun roomText(room: Any, link: String?): String {
         val id = field(room, "id") as? Long ?: 0L
         val idStr = (field(room, "idStr") as? String)?.takeIf { it.isNotBlank() } ?: id.toString()
         val title = (field(room, "title") as? String)?.takeIf { it.isNotBlank() } ?: "(无)"
@@ -186,6 +219,7 @@ object LiveRoomInfo {
             if (status != 2 && finishTime > 0L) appendLine("结束时间: ${timeText(finishTime)}")
             appendLine("创建时间: ${timeText(createTime)}")
             appendLine("直播类型: ${if (audio) "语音直播" else "视频直播"}")
+            if (!link.isNullOrBlank()) appendLine("直播间链接: $link")
             if (shareUrl.isNotBlank()) appendLine("分享链接: $shareUrl")
             if (requestId.isNotBlank()) appendLine("请求ID: $requestId")
         }.trim()

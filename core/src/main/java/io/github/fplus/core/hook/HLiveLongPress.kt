@@ -152,12 +152,24 @@ class HLiveLongPress : BaseHook() {
         when (item) {
             "直播间信息" -> {
                 singleLaunchMain("liveRoomInfo") {
-                    val msg = LiveRoomInfo.format(activity.classLoader)
+                    val info = LiveRoomInfo.read(activity.classLoader)
+                    val link = info.link
+                    val actions = if (link != null) {
+                        listOf<Pair<CharSequence, () -> Unit>>(
+                            "复制链接" to {
+                                copyToClipboard(activity, "直播间链接", link)
+                                showToast(activity, "已复制直播间链接")
+                            }
+                        )
+                    } else {
+                        emptyList()
+                    }
                     showMessageDialog(
                         context = activity,
                         title = "直播间信息",
-                        content = msg,
-                        copyText = msg,
+                        content = info.text,
+                        copyText = info.text,
+                        actions = actions,
                         singleButton = true,
                         windowMode = true,
                     )
