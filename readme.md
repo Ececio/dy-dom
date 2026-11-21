@@ -1,20 +1,4 @@
 
-## 支持版本
-
-- 理论上支持：28.0.0 ~ 至今 (28.0.0以下可能有兼容问题，请使用1.2.8之前的版本)
-- 版本号**参考**列表：[version.json](https://github.com/GangJust/FreedomPlus/blob/master/versions.json)
-
-
-
-## 模块下载
-
-前往以下任意地址进行下载
-
-- [FreedomPlus Release](https://github.com/GangJust/FreedomPlus/releases/latest)
-- [Xposed Modules Repository Release](https://github.com/Xposed-Modules-Repo/com.freegang.fplus/releases/latest)
-
-
-
 ## 开源库/Public Library
 
 注：删除线表示依赖被引用，但项目未使用或曾经使用
