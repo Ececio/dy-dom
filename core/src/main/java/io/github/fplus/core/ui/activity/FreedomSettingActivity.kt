@@ -461,7 +461,7 @@ class FreedomSettingActivity : XplerActivity() {
         ClickItem(
             text = "收藏作者",
             subtext = if (count > 0) {
-                "已收藏 $count 位作者，列表按标签分组，点击查看、跳转主页或删除"
+                "已收藏 $count 位作者，按标签分组，可展开/收起、跳转主页或删除"
             } else {
                 "收藏时可添加标签（可留空），列表按标签分组；数据保存在 authors.json"
             },
@@ -524,7 +524,7 @@ class FreedomSettingActivity : XplerActivity() {
         ClickItem(
             text = "收藏作品",
             subtext = if (count > 0) {
-                "已收藏 $count 个作品，列表按标签分组，点击打开作品或删除"
+                "已收藏 $count 个作品，按标签分组，可展开/收起、点击打开作品或删除"
             } else {
                 "长按视频选「收藏作品」即可加入，可添加标签；数据保存在 awemes.json"
             },

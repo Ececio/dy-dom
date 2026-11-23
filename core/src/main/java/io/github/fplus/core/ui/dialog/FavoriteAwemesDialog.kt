@@ -12,7 +12,10 @@ import androidx.compose.material.Divider
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -22,6 +25,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.fplus.core.hook.logic.FavoriteAweme
 import io.github.fplus.core.ui.component.FDialog
+import io.github.fplus.core.ui.component.FavoriteGroupHeader
+import io.github.fplus.core.ui.component.FavoriteTagChips
 
 /** 一个标签分组；tag 为空表示「未分组」 */
 private data class AwemeGroup(
@@ -109,25 +114,40 @@ fun FavoriteAwemesDialog(
                 )
             } else {
                 val groups = remember(awemes) { groupAwemesByTag(awemes) }
+                var collapsedTags by remember(awemes) { mutableStateOf(emptySet<String>()) }
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(max = 420.dp),
                 ) {
                     groups.forEach { group ->
+                        val collapsed = group.tag in collapsedTags
                         item(key = "group:${group.tag}") {
-                            GroupHeader(tag = group.tag, count = group.awemes.size)
-                        }
-                        items(
-                            items = group.awemes,
-                            key = { aweme -> "${group.tag}:${aweme.key}" },
-                        ) { aweme ->
-                            FavoriteAwemeRow(
-                                aweme = aweme,
-                                onOpen = { onOpen(aweme) },
-                                onDelete = { onDelete(aweme) },
+                            FavoriteGroupHeader(
+                                tag = group.tag,
+                                count = group.awemes.size,
+                                collapsed = collapsed,
+                                onToggle = {
+                                    collapsedTags = if (collapsed) {
+                                        collapsedTags - group.tag
+                                    } else {
+                                        collapsedTags + group.tag
+                                    }
+                                },
                             )
-                            Divider()
+                        }
+                        if (!collapsed) {
+                            items(
+                                items = group.awemes,
+                                key = { aweme -> "${group.tag}:${aweme.key}" },
+                            ) { aweme ->
+                                FavoriteAwemeRow(
+                                    aweme = aweme,
+                                    onOpen = { onOpen(aweme) },
+                                    onDelete = { onDelete(aweme) },
+                                )
+                                Divider()
+                            }
                         }
                     }
                 }
@@ -142,36 +162,6 @@ fun FavoriteAwemesDialog(
                 ),
             )
         }
-    }
-}
-
-@Composable
-private fun GroupHeader(tag: String, count: Int) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = if (tag.isBlank()) "未分组" else "#$tag",
-            style = MaterialTheme.typography.body2.copy(
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-                color = if (tag.isBlank()) {
-                    MaterialTheme.colors.onSurface.copy(alpha = 0.5f)
-                } else {
-                    MaterialTheme.colors.primary
-                },
-            ),
-        )
-        Text(
-            text = " $count",
-            style = MaterialTheme.typography.body2.copy(
-                fontSize = 12.sp,
-                color = MaterialTheme.colors.onSurface.copy(alpha = 0.45f),
-            ),
-        )
     }
 }
 
@@ -227,15 +217,9 @@ private fun FavoriteAwemeRow(
         }
 
         if (aweme.tags.orEmpty().isNotEmpty()) {
-            Text(
-                text = aweme.tagsText,
-                modifier = Modifier.padding(top = 2.dp),
-                style = MaterialTheme.typography.body2.copy(
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colors.primary.copy(alpha = 0.8f),
-                ),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            FavoriteTagChips(
+                tags = aweme.tags.orEmpty(),
+                modifier = Modifier.padding(top = 4.dp),
             )
         }
     }
