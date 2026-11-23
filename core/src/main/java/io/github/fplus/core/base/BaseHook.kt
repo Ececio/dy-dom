@@ -21,7 +21,6 @@ import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.view.ViewTreeObserver
 import android.view.Window
 import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
@@ -335,6 +334,37 @@ abstract class BaseHook : HookEntity() {
                 binding.messageDialogActions.addView(row)
             }
         }
+
+        // 先按内容测量一次：内容超高时固定弹窗高度，把剩余空间全部给滚动区，
+        // 这样底部操作按钮不会被内容挤出屏幕。
+        val metrics = context.resources.displayMetrics
+        val density = metrics.density
+        val horizontalMargin = ((if (actions.isNotEmpty()) 20 else 48) * density).toInt()
+        val verticalMargin = ((if (actions.isNotEmpty()) 32 else 48) * density).toInt()
+        val maxHeight = if (actions.isEmpty()) {
+            (metrics.heightPixels * 0.55f).toInt()
+        } else {
+            metrics.heightPixels - verticalMargin * 2
+        }
+        binding.messageDialogContainer.measure(
+            View.MeasureSpec.makeMeasureSpec(
+                metrics.widthPixels - horizontalMargin * 2,
+                View.MeasureSpec.EXACTLY,
+            ),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+        )
+        if (binding.messageDialogContainer.measuredHeight > maxHeight) {
+            (binding.messageDialogContainer.layoutParams as? FrameLayout.LayoutParams)?.let { params ->
+                params.height = maxHeight
+                binding.messageDialogContainer.layoutParams = params
+            }
+            binding.messageDialogScroll.layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f,
+            )
+        }
+
         val windowDialog = if (windowMode) createWindowDialog(context, binding.root) else null
 
         binding.messageDialogCancel.setOnClickListener {
@@ -356,15 +386,7 @@ abstract class BaseHook : HookEntity() {
             )
         }
         // 字段很多时（如作者/直播间信息）限制内容高度，按钮才不会被挤出屏幕；
-        // 高度按弹窗实际可用空间计算，信息窗口尽量多显示内容。
-        clampScrollHeight(
-            context = context,
-            root = binding.root,
-            container = binding.messageDialogContainer,
-            scroll = binding.messageDialogScroll,
-            content = binding.messageDialogContent,
-            ratio = if (actions.isEmpty()) 0.55f else 0.70f,
-        )
+        // 高度已在上方按实际测量结果固定，这里不再需要二次布局修正。
     }
 
     fun copyToClipboard(context: Context, label: CharSequence, text: CharSequence) {
@@ -714,70 +736,6 @@ abstract class BaseHook : HookEntity() {
 
         // 不主动弹软键盘：先把已有标签完整露出来，用户点输入框时再输入新标签。
         editText.requestFocus()
-    }
-
-    /**
-     * 内容过高时限制 ScrollView 高度，让底部按钮保持可见。
-     * 必须在窗口显示后调用，此时子 View 才完成测量。
-     */
-    private fun clampScrollHeight(
-        context: Context,
-        root: View,
-        container: ViewGroup,
-        scroll: ScrollView,
-        content: View,
-        ratio: Float = 0.55f,
-    ) {
-        // 布局可能已经同步完成，也可能还没开始：监听 + post 双保险，谁先就绪谁执行
-        var applied = false
-        fun applyClamp() {
-            if (applied || root.height <= 0 || content.height <= 0) return
-            applied = true
-
-            val screenHeight = context.resources.displayMetrics.heightPixels
-            val contentHeight = content.height + scroll.paddingTop + scroll.paddingBottom
-            val maxHeight = if (root.height <= 0) {
-                (screenHeight * ratio).toInt()
-            } else {
-                // 可用高度 = 窗口高度 - 上下留白 - 标题/操作按钮/底部按钮
-                val params = container.layoutParams as? ViewGroup.MarginLayoutParams
-                val verticalMargins = (params?.topMargin ?: 0) + (params?.bottomMargin ?: 0)
-                var fixedHeight = 0
-                for (index in 0 until container.childCount) {
-                    val child = container.getChildAt(index)
-                    if (child === scroll || child.visibility == View.GONE) continue
-                    fixedHeight += child.height
-                }
-                val available = root.height - verticalMargins - fixedHeight -
-                    container.paddingTop - container.paddingBottom
-                available.coerceAtLeast(
-                    (120 * context.resources.displayMetrics.density).toInt()
-                )
-            }
-            val target = if (contentHeight > maxHeight) {
-                maxHeight
-            } else {
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            }
-            if (scroll.layoutParams?.height != target) {
-                scroll.layoutParams = scroll.layoutParams.apply { height = target }
-            }
-        }
-
-        val listener = object : ViewTreeObserver.OnGlobalLayoutListener {
-            override fun onGlobalLayout() {
-                if (root.height <= 0 || content.height <= 0) return
-                applyClamp()
-                scroll.viewTreeObserver.removeOnGlobalLayoutListener(this)
-            }
-        }
-        scroll.viewTreeObserver.addOnGlobalLayoutListener(listener)
-        scroll.post {
-            applyClamp()
-            if (applied) {
-                scroll.viewTreeObserver.removeOnGlobalLayoutListener(listener)
-            }
-        }
     }
 
     fun showProgressDialog(
