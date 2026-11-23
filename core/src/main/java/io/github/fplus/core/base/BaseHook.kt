@@ -675,14 +675,8 @@ abstract class BaseHook : HookEntity() {
 
         showDialog(view = root, onDismiss = onDismiss)
 
+        // 不主动弹软键盘：先把已有标签完整露出来，用户点输入框时再输入新标签。
         editText.requestFocus()
-        editText.postDelayed({
-            if (!editText.isAttachedToWindow) return@postDelayed
-            editText.requestFocus()
-            val manager =
-                context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-            manager?.showSoftInput(editText, InputMethodManager.SHOW_IMPLICIT)
-        }, 300L)
     }
 
     /**
