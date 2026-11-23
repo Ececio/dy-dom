@@ -46,6 +46,7 @@ import io.github.fplus.core.databinding.DialogMessageLayoutBinding
 import io.github.fplus.core.databinding.DialogProgressLayoutBinding
 import io.github.fplus.core.ui.ModuleTheme
 import io.github.fplus.core.ui.dialog.XplerDialogWrapper
+import io.github.fplus.core.view.FlowLayout
 import io.github.fplus.core.view.PopupDialog
 import io.github.fplus.core.view.adapter.DialogChoiceAdapter
 import io.github.fplus.plugin.injectRes
@@ -610,8 +611,11 @@ abstract class BaseHook : HookEntity() {
                 setPadding(dp(24), dp(12), dp(24), dp(4))
             })
 
-            val chipsLayout = LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
+            // 已有标签用流式布局，一行最多 4 个，放不下自动换行
+            val chipsLayout = FlowLayout(context).apply {
+                horizontalSpacing = dp(6)
+                verticalSpacing = dp(6)
+                maxItemsPerRow = 4
                 setPadding(dp(24), dp(2), dp(24), dp(4))
             }
             allTags.distinct().forEach { tag ->
@@ -619,7 +623,7 @@ abstract class BaseHook : HookEntity() {
                     text = "#$tag"
                     textSize = 13f
                     setTextColor(textColor)
-                    setPadding(dp(10), dp(8), dp(10), dp(8))
+                    setPadding(dp(10), dp(6), dp(10), dp(6))
                     isClickable = true
                     isFocusable = true
                     setOnClickListener {
@@ -636,10 +640,13 @@ abstract class BaseHook : HookEntity() {
                     }
                 }
                 chips[tag] = chip
-                chipsLayout.addView(chip, LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                ).apply { topMargin = dp(2) })
+                chipsLayout.addView(
+                    chip,
+                    ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ),
+                )
             }
 
             val scroll = ScrollView(context).apply {
@@ -649,9 +656,11 @@ abstract class BaseHook : HookEntity() {
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT,
             ))
+            // 一行 4 个，超过两行才限高滚动，避免一两个标签也占一大片
+            val chipRows = (allTags.distinct().size + 3) / 4
             container.addView(scroll, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                if (allTags.size > 4) dp(168) else LinearLayout.LayoutParams.WRAP_CONTENT,
+                if (chipRows > 2) dp(168) else LinearLayout.LayoutParams.WRAP_CONTENT,
             ))
         }
 
