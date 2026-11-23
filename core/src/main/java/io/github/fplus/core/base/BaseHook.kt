@@ -15,6 +15,7 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import android.text.Editable
 import android.text.InputType
+import android.text.TextUtils
 import android.text.TextWatcher
 import android.view.Gravity
 import android.view.LayoutInflater
@@ -276,29 +277,61 @@ abstract class BaseHook : HookEntity() {
         binding.messageDialogActions.isVisible = actions.isNotEmpty()
         if (actions.isNotEmpty()) {
             val density = context.resources.displayMetrics.density
+            val dp: (Int) -> Int = { (it * density).toInt() }
+            // 信息弹窗字段多，缩小四周留白，能多显示几行内容
+            (binding.messageDialogContainer.layoutParams as? ViewGroup.MarginLayoutParams)?.let { params ->
+                params.setMargins(dp(20), dp(32), dp(20), dp(32))
+                binding.messageDialogContainer.layoutParams = params
+            }
             binding.messageDialogActions.removeAllViews()
-            actions.forEach { (label, action) ->
-                val button = TextView(context).apply {
+            // 一行最多放两个按钮，避免一行一个太占空间
+            val columns = minOf(actions.size, 2)
+            actions.chunked(columns).forEachIndexed { rowIndex, rowActions ->
+                val row = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
                     layoutParams = LinearLayout.LayoutParams(
                         LinearLayout.LayoutParams.MATCH_PARENT,
                         LinearLayout.LayoutParams.WRAP_CONTENT,
-                    )
-                    gravity = Gravity.CENTER
-                    setPadding(0, (10 * density).toInt(), 0, (10 * density).toInt())
-                    text = label
-                    textSize = 14f
-                    setTextColor(Color.parseColor("#FFEDA664"))
-                    background = getDrawable(
-                        context,
-                        isDarkMode,
-                        R.drawable.dialog_action_background_night,
-                        R.drawable.dialog_action_background,
-                    )
-                    isClickable = true
-                    isFocusable = true
-                    setOnClickListener { action.invoke() }
+                    ).apply {
+                        if (rowIndex > 0) topMargin = dp(4)
+                    }
                 }
-                binding.messageDialogActions.addView(button)
+
+                rowActions.forEachIndexed { index, (label, action) ->
+                    val button = TextView(context).apply {
+                        layoutParams = LinearLayout.LayoutParams(
+                            0,
+                            LinearLayout.LayoutParams.WRAP_CONTENT,
+                            1f,
+                        ).apply {
+                            if (index > 0) leftMargin = dp(4)
+                            if (index < rowActions.lastIndex) rightMargin = dp(4)
+                        }
+                        gravity = Gravity.CENTER
+                        setPadding(0, dp(10), 0, dp(10))
+                        text = label
+                        textSize = 14f
+                        maxLines = 1
+                        ellipsize = TextUtils.TruncateAt.END
+                        setTextColor(Color.parseColor("#FFEDA664"))
+                        background = getDrawable(
+                            context,
+                            isDarkMode,
+                            R.drawable.dialog_action_background_night,
+                            R.drawable.dialog_action_background,
+                        )
+                        isClickable = true
+                        isFocusable = true
+                        setOnClickListener { action.invoke() }
+                    }
+                    row.addView(button)
+                }
+
+                // 最后一行不满时补占位，保证按钮宽度一致
+                repeat(columns - rowActions.size) {
+                    row.addView(View(context), LinearLayout.LayoutParams(0, 0, 1f))
+                }
+                binding.messageDialogActions.addView(row)
             }
         }
         val windowDialog = if (windowMode) createWindowDialog(context, binding.root) else null
@@ -321,12 +354,15 @@ abstract class BaseHook : HookEntity() {
                 onDismiss = onDismiss,
             )
         }
-        // 字段很多时（如作者/直播间信息）限制内容高度，按钮才不会被挤出屏幕
+        // 字段很多时（如作者/直播间信息）限制内容高度，按钮才不会被挤出屏幕；
+        // 高度按弹窗实际可用空间计算，信息窗口尽量多显示内容。
         clampScrollHeight(
-            context,
-            binding.messageDialogScroll,
-            binding.messageDialogContent,
-            ratio = if (actions.isEmpty()) 0.55f else 0.40f,
+            context = context,
+            root = binding.root,
+            container = binding.messageDialogContainer,
+            scroll = binding.messageDialogScroll,
+            content = binding.messageDialogContent,
+            ratio = if (actions.isEmpty()) 0.55f else 0.70f,
         )
     }
 
@@ -685,13 +721,32 @@ abstract class BaseHook : HookEntity() {
      */
     private fun clampScrollHeight(
         context: Context,
+        root: View,
+        container: ViewGroup,
         scroll: ScrollView,
         content: View,
         ratio: Float = 0.55f,
     ) {
         scroll.post {
-            val maxHeight = (context.resources.displayMetrics.heightPixels * ratio).toInt()
+            val screenHeight = context.resources.displayMetrics.heightPixels
             val contentHeight = content.height + scroll.paddingTop + scroll.paddingBottom
+            val rootHeight = root.height.takeIf { it > 0 }
+            val maxHeight = if (rootHeight == null) {
+                (screenHeight * ratio).toInt()
+            } else {
+                // 可用高度 = 窗口高度 - 上下留白 - 标题/操作按钮/底部按钮
+                val params = container.layoutParams as? ViewGroup.MarginLayoutParams
+                val verticalMargins = (params?.topMargin ?: 0) + (params?.bottomMargin ?: 0)
+                var fixedHeight = 0
+                for (index in 0 until container.childCount) {
+                    val child = container.getChildAt(index)
+                    if (child === scroll || child.visibility == View.GONE) continue
+                    fixedHeight += child.height
+                }
+                val available = rootHeight - verticalMargins - fixedHeight -
+                    container.paddingTop - container.paddingBottom
+                available.coerceAtLeast((120 * context.resources.displayMetrics.density).toInt())
+            }
             val target = if (contentHeight > maxHeight) maxHeight else ViewGroup.LayoutParams.WRAP_CONTENT
             if (scroll.layoutParams?.height != target) {
                 scroll.layoutParams = scroll.layoutParams.apply { height = target }

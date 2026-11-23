@@ -129,7 +129,8 @@ private fun Any.extractNestedInfo(): String? {
 }
 
 /**
- * 视频信息：作者、作品 ID、属地、区划接口、发布时间、IP 属地、POI、时长、分辨率、音乐和描述。
+ * 视频信息：作者、作品 ID、属地、区划接口、发布时间、IP 属地、POI、时长、分辨率、音乐、描述，
+ * 视频链接放在最后，方便直接选中复制。
  *
  * 区划/地名/边界/离线库 四个接口并发请求，任意一个失败只会隐藏对应字段，不影响其它内容。
  */
@@ -152,7 +153,6 @@ suspend fun Aweme.videoInfoText(context: Context): String = coroutineScope {
     }
 
     aid?.takeIf { it.isNotBlank() }?.let { lines += "作品ID: $it" }
-    videoLink().takeIf { it.isNotBlank() }?.let { lines += "视频链接: $it" }
     lines += "视频属地: ${cityInfo()}"
 
     areaApi.await()?.let { lines += "区划接口: $it" }
@@ -196,6 +196,8 @@ suspend fun Aweme.videoInfoText(context: Context): String = coroutineScope {
     desc?.takeIf { it.isNotBlank() }?.let {
         lines += "描述: ${it.take(120)}${if (it.length > 120) "..." else ""}"
     }
+
+    videoLink().takeIf { it.isNotBlank() }?.let { lines += "视频链接: $it" }
 
     lines.joinToString("\n")
 }

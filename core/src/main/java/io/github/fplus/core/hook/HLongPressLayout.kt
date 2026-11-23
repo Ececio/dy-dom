@@ -350,6 +350,14 @@ class HLongPressLayout : BaseHook() {
                                     showToast(context, "已复制 UID：$uid")
                                 }
                             },
+                            "复制 secUid" to {
+                                if (secUid.isBlank()) {
+                                    showToast(context, "没有获取到 secUid")
+                                } else {
+                                    copyToClipboard(context, "secUid", secUid)
+                                    showToast(context, "已复制 secUid：$secUid")
+                                }
+                            },
                             "复制主页链接" to {
                                 if (secUid.isBlank()) {
                                     showToast(context, "作者信息里没有 secUid")
