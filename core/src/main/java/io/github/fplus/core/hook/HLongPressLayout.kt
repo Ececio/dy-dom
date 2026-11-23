@@ -28,8 +28,12 @@ import io.github.fplus.core.hook.logic.DownloadAllUserWorksLogic
 import io.github.fplus.core.hook.logic.DownloadLogic
 import io.github.fplus.core.hook.logic.FavoriteAuthor
 import io.github.fplus.core.hook.logic.FavoriteAuthorStore
+import io.github.fplus.core.hook.logic.FavoriteAweme
+import io.github.fplus.core.hook.logic.FavoriteAwemeStore
+import io.github.fplus.core.hook.logic.FavoriteTags
 import io.github.fplus.core.hook.logic.authorInfoText
 import io.github.fplus.core.hook.logic.videoInfoText
+import io.github.fplus.core.hook.logic.videoLink
 import io.github.fplus.core.ui.activity.FreedomSettingActivity
 import io.github.xpler.core.XplerLog
 import io.github.xpler.core.hookBlockRunning
@@ -170,6 +174,7 @@ class HLongPressLayout : BaseHook() {
         }
 
         items.add("收藏作者")
+        items.add("收藏作品")
         items.add("获取作者信息")
 
         if (config.isNeatMode) {
@@ -231,19 +236,21 @@ class HLongPressLayout : BaseHook() {
                     return
                 }
                 val context = view.context
-                // 先读已有的标签，弹窗里预填，方便直接修改或清空
+                // 先读已有的标签和所有用过的标签，弹窗里可以点选，也可以继续手输
                 singleLaunchIO("findFavoriteAuthor") {
                     val existing = runCatching {
                         FavoriteAuthorStore.find(context, author.key)
                     }.getOrNull()
+                    val allTags = runCatching { FavoriteTags.all(context) }.getOrDefault(emptyList())
                     singleLaunchMain("favoriteAuthor") {
-                        showInputDialog(
+                        showTagInputDialog(
                             context = context,
                             title = if (existing == null) "收藏作者" else "更新收藏作者",
                             message = "给「${author.displayName}」添加标签，可留空。" +
                                 "多个标签用空格或逗号分隔，最多 8 个；清空后保存会删除原有标签。",
                             hint = "例如：广西 搞笑",
-                            defaultValue = existing?.tags.orEmpty().joinToString(" "),
+                            allTags = allTags,
+                            defaultTags = existing?.tags.orEmpty(),
                             confirm = "保存",
                             onConfirm = { text ->
                                 val tagged = author.copy(tags = FavoriteAuthor.parseTags(text))
@@ -260,6 +267,52 @@ class HLongPressLayout : BaseHook() {
                                             showToast(context, "已更新收藏：${tagged.displayName}$tagSuffix")
 
                                         FavoriteAuthorStore.Result.FAILED ->
+                                            showToast(context, "收藏失败，请检查存储权限")
+                                    }
+                                }
+                            },
+                        )
+                    }
+                }
+            }
+
+            "收藏作品" -> {
+                val favorite = FavoriteAweme.fromAweme(aweme)
+                if (favorite == null) {
+                    showToast(view.context, "未获取到作品 ID")
+                    return
+                }
+                val context = view.context
+                singleLaunchIO("findFavoriteAweme") {
+                    val existing = runCatching {
+                        FavoriteAwemeStore.find(context, favorite.key)
+                    }.getOrNull()
+                    val allTags = runCatching { FavoriteTags.all(context) }.getOrDefault(emptyList())
+                    singleLaunchMain("favoriteAweme") {
+                        showTagInputDialog(
+                            context = context,
+                            title = if (existing == null) "收藏作品" else "更新收藏作品",
+                            message = "给「${favorite.displayName.take(40)}」添加标签，可留空。" +
+                                "多个标签用空格或逗号分隔，最多 8 个；清空后保存会删除原有标签。",
+                            hint = "例如：广西 搞笑",
+                            allTags = allTags,
+                            defaultTags = existing?.tags.orEmpty(),
+                            confirm = "保存",
+                            onConfirm = { text ->
+                                val tagged = favorite.copy(tags = FavoriteAuthor.parseTags(text))
+                                singleLaunchIO("favoriteAweme") {
+                                    val tagSuffix = tagged.tags.orEmpty()
+                                        .takeIf { it.isNotEmpty() }
+                                        ?.joinToString("", prefix = "，标签：") { "#$it" }
+                                        .orEmpty()
+                                    when (FavoriteAwemeStore.upsert(context, tagged)) {
+                                        FavoriteAwemeStore.Result.ADDED ->
+                                            showToast(context, "已收藏作品：${tagged.displayName.take(20)}$tagSuffix")
+
+                                        FavoriteAwemeStore.Result.UPDATED ->
+                                            showToast(context, "已更新收藏：${tagged.displayName.take(20)}$tagSuffix")
+
+                                        FavoriteAwemeStore.Result.FAILED ->
                                             showToast(context, "收藏失败，请检查存储权限")
                                     }
                                 }
@@ -312,13 +365,35 @@ class HLongPressLayout : BaseHook() {
 
             "视频信息" -> {
                 singleLaunchMain("$item") {
-                    val msg = aweme?.videoInfoText(view.context) ?: "未知"
+                    val target = aweme
+                    val context = view.context
+                    val msg = target?.videoInfoText(context) ?: "未知"
+                    val videoId = target?.aid.orEmpty()
+                    val link = target?.videoLink().orEmpty()
                     showMessageDialog(
-                        context = view.context,
+                        context = context,
                         title = "视频信息",
                         content = msg,
                         copyText = msg,
                         singleButton = true,
+                        actions = listOf(
+                            "复制视频ID" to {
+                                if (videoId.isBlank()) {
+                                    showToast(context, "没有获取到视频 ID")
+                                } else {
+                                    copyToClipboard(context, "视频ID", videoId)
+                                    showToast(context, "已复制视频ID：$videoId")
+                                }
+                            },
+                            "复制视频链接" to {
+                                if (link.isBlank()) {
+                                    showToast(context, "没有获取到视频链接")
+                                } else {
+                                    copyToClipboard(context, "视频链接", link)
+                                    showToast(context, "已复制视频链接")
+                                }
+                            },
+                        ),
                     )
                 }
             }

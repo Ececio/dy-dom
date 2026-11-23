@@ -23,6 +23,17 @@ fun Aweme.createDate(): String {
 }
 
 /**
+ * 作品网页链接：优先用宿主下发的 shareUrl，没有时用 `douyin.com/video/<aid>` 拼。
+ * 两种链接都能在浏览器打开，也能被抖音识别为对应作品。
+ */
+fun Aweme.videoLink(): String {
+    val share = getTextValue("shareUrl", "share_url")?.takeIf { it.startsWith("http") }
+    if (!share.isNullOrBlank()) return share
+    val id = aid?.takeIf { it.isNotBlank() } ?: return ""
+    return "https://www.douyin.com/video/$id"
+}
+
+/**
  * 获取当前视频作者的全部字段。
  *
  * 使用运行时反射遍历真实的 User 类（不止 compileOnly 桩类里声明的字段），
@@ -141,6 +152,7 @@ suspend fun Aweme.videoInfoText(context: Context): String = coroutineScope {
     }
 
     aid?.takeIf { it.isNotBlank() }?.let { lines += "作品ID: $it" }
+    videoLink().takeIf { it.isNotBlank() }?.let { lines += "视频链接: $it" }
     lines += "视频属地: ${cityInfo()}"
 
     areaApi.await()?.let { lines += "区划接口: $it" }

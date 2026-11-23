@@ -13,6 +13,9 @@ import android.os.Handler
 import android.os.Looper
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.text.Editable
+import android.text.InputType
+import android.text.TextWatcher
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
@@ -20,6 +23,8 @@ import android.view.ViewGroup
 import android.view.Window
 import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
+import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
@@ -417,6 +422,266 @@ abstract class BaseHook : HookEntity() {
             val manager =
                 context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
             manager?.showSoftInput(binding.inputDialogEdit, InputMethodManager.SHOW_IMPLICIT)
+        }, 300L)
+    }
+
+    /**
+     * 标签输入弹窗：上方是已用过的标签，点一下选中/取消，下方输入框也能自己填新标签。
+     *
+     * 输入框是唯一数据源，点选标签只是把标签拼进输入框，所以「点选」和「手输」可以混用；
+     * 返回值仍然是输入框里的文本，由调用方用同一套规则解析成标签列表。
+     */
+    fun showTagInputDialog(
+        context: Context,
+        title: CharSequence,
+        message: CharSequence = "",
+        hint: CharSequence = "输入新标签，多个用空格或逗号分隔",
+        allTags: List<String> = emptyList(),
+        defaultTags: List<String> = emptyList(),
+        maxTags: Int = 8,
+        maxTagLength: Int = 16,
+        cancel: CharSequence = "取消",
+        confirm: CharSequence = "保存",
+        onConfirm: (input: String) -> Unit,
+        onCancel: () -> Unit = {},
+        onDismiss: () -> Unit = {},
+    ) {
+        injectRes(context.resources)
+        val isDarkMode = context.isDarkMode
+        val density = context.resources.displayMetrics.density
+        fun dp(value: Int): Int = (value * density).toInt()
+        val textColor = getTextColor(isDarkMode)
+        val hintColor = getHintTextColor(isDarkMode)
+
+        fun parseTags(text: String): List<String> {
+            return text.split(Regex("[\\s\\u3000,，;；#]+"))
+                .asSequence()
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .map { it.take(maxTagLength) }
+                .distinct()
+                .take(maxTags)
+                .toList()
+        }
+
+        val container = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            background = getDrawable(
+                context,
+                isDarkMode,
+                R.drawable.dialog_background_night,
+                R.drawable.dialog_background,
+            )
+        }
+
+        container.addView(TextView(context).apply {
+            text = title
+            textSize = 16f
+            setTextColor(textColor)
+            setPadding(dp(24), dp(16), dp(24), dp(8))
+        })
+
+        if (message.isNotBlank()) {
+            container.addView(TextView(context).apply {
+                text = message
+                textSize = 12f
+                setTextColor(hintColor)
+                setLineSpacing(0f, 1.2f)
+                setPadding(dp(24), 0, dp(24), dp(8))
+            })
+        }
+
+        val editText = EditText(context).apply {
+            setSingleLine(true)
+            inputType = InputType.TYPE_CLASS_TEXT
+            textSize = 14f
+            setTextColor(textColor)
+            this.hint = hint
+            setHintTextColor(hintColor)
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            background = getDrawable(
+                context,
+                isDarkMode,
+                R.drawable.dialog_input_background_night,
+                R.drawable.dialog_input_background,
+            )
+            setText(defaultTags.joinToString(" "))
+            setSelection(text?.length ?: 0)
+        }
+        container.addView(editText, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+        ).apply {
+            leftMargin = dp(16)
+            rightMargin = dp(16)
+            topMargin = dp(4)
+        })
+
+        val chips = linkedMapOf<String, TextView>()
+
+        fun renderChips() {
+            val selected = parseTags(editText.text?.toString().orEmpty())
+            chips.forEach { (tag, view) ->
+                val isSelected = selected.contains(tag)
+                view.text = if (isSelected) "✓ $tag" else "#$tag"
+                view.setTextColor(if (isSelected) Color.parseColor("#FFEDA664") else textColor)
+                view.background = if (isSelected) {
+                    getDrawable(
+                        context,
+                        isDarkMode,
+                        R.drawable.dialog_input_background_night,
+                        R.drawable.dialog_input_background,
+                    )
+                } else {
+                    getDrawable(
+                        context,
+                        isDarkMode,
+                        R.drawable.dialog_action_background_night,
+                        R.drawable.dialog_action_background,
+                    )
+                }
+            }
+        }
+
+        if (allTags.isNotEmpty()) {
+            container.addView(TextView(context).apply {
+                text = "已有标签（点击选择/取消）"
+                textSize = 12f
+                setTextColor(hintColor)
+                setPadding(dp(24), dp(12), dp(24), dp(4))
+            })
+
+            val chipsLayout = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(24), dp(2), dp(24), dp(4))
+            }
+            allTags.distinct().forEach { tag ->
+                val chip = TextView(context).apply {
+                    text = "#$tag"
+                    textSize = 13f
+                    setTextColor(textColor)
+                    setPadding(dp(10), dp(8), dp(10), dp(8))
+                    isClickable = true
+                    isFocusable = true
+                    setOnClickListener {
+                        val selected = parseTags(editText.text?.toString().orEmpty()).toMutableList()
+                        if (!selected.remove(tag)) {
+                            if (selected.size >= maxTags) {
+                                showToast(context, "最多 $maxTags 个标签")
+                                return@setOnClickListener
+                            }
+                            selected.add(tag)
+                        }
+                        editText.setText(selected.joinToString(" "))
+                        editText.setSelection(editText.text?.length ?: 0)
+                    }
+                }
+                chips[tag] = chip
+                chipsLayout.addView(chip, LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                ).apply { topMargin = dp(2) })
+            }
+
+            val scroll = ScrollView(context).apply {
+                isFillViewport = false
+            }
+            scroll.addView(chipsLayout, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+            ))
+            container.addView(scroll, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                if (allTags.size > 4) dp(168) else LinearLayout.LayoutParams.WRAP_CONTENT,
+            ))
+        }
+
+        container.addView(TextView(context).apply {
+            text = "也可以直接输入新标签，最多 $maxTags 个"
+            textSize = 12f
+            setTextColor(hintColor)
+            setPadding(dp(24), dp(6), dp(24), dp(6))
+        })
+
+        val buttons = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        val cancelView = TextView(context).apply {
+            text = cancel
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setTextColor(textColor)
+            setPadding(dp(24), dp(16), dp(24), dp(16))
+            isClickable = true
+            isFocusable = true
+            background = getDrawable(
+                context,
+                isDarkMode,
+                R.drawable.dialog_cancel_button_background_night,
+                R.drawable.dialog_cancel_button_background,
+            )
+            setOnClickListener {
+                popupDialog?.dismiss()
+                onCancel.invoke()
+            }
+        }
+        val confirmView = TextView(context).apply {
+            text = confirm
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setTextColor(Color.parseColor("#FFEDA664"))
+            setPadding(dp(24), dp(16), dp(24), dp(16))
+            isClickable = true
+            isFocusable = true
+            background = getDrawable(
+                context,
+                isDarkMode,
+                R.drawable.dialog_confirm_button_background_night,
+                R.drawable.dialog_confirm_button_background,
+            )
+            setOnClickListener {
+                val input = editText.text?.toString().orEmpty()
+                popupDialog?.dismiss()
+                onConfirm.invoke(input)
+            }
+        }
+        buttons.addView(cancelView, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        buttons.addView(confirmView, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        container.addView(buttons, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+        ))
+
+        editText.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+
+            override fun afterTextChanged(s: Editable?) {
+                renderChips()
+            }
+        })
+        renderChips()
+
+        val root = FrameLayout(context)
+        root.addView(container, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            Gravity.CENTER,
+        ).apply {
+            leftMargin = dp(32)
+            rightMargin = dp(32)
+        })
+
+        showDialog(view = root, onDismiss = onDismiss)
+
+        editText.requestFocus()
+        editText.postDelayed({
+            if (!editText.isAttachedToWindow) return@postDelayed
+            editText.requestFocus()
+            val manager =
+                context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            manager?.showSoftInput(editText, InputMethodManager.SHOW_IMPLICIT)
         }, 300L)
     }
 

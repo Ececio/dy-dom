@@ -75,6 +75,8 @@ import io.github.fplus.core.helper.DexkitBuilder
 import io.github.fplus.core.helper.HighlightStyleBuilder
 import io.github.fplus.core.hook.logic.FavoriteAuthor
 import io.github.fplus.core.hook.logic.FavoriteAuthorStore
+import io.github.fplus.core.hook.logic.FavoriteAweme
+import io.github.fplus.core.hook.logic.FavoriteAwemeStore
 import io.github.fplus.core.ui.ModuleTheme
 import io.github.fplus.core.ui.asDp
 import io.github.fplus.core.ui.component.FCard
@@ -83,6 +85,7 @@ import io.github.fplus.core.ui.component.FCountDownMessageDialog
 import io.github.fplus.core.ui.component.FMessageDialog
 import io.github.fplus.core.ui.component.FWaitingMessageDialog
 import io.github.fplus.core.ui.dialog.FavoriteAuthorsDialog
+import io.github.fplus.core.ui.dialog.FavoriteAwemesDialog
 import io.github.fplus.core.ui.dialog.VideoInfoInterfacesDialog
 import io.github.fplus.core.ui.viewmodel.FreedomSettingVM
 import io.github.fplus.plugin.activity.XplerActivity
@@ -282,7 +285,9 @@ class FreedomSettingActivity : XplerActivity() {
         ) {
             item { DownloadItem() }
             item { FavoriteAuthorsItem() }
+            item { FavoriteAwemesItem() }
             item { UidJumpItem() }
+            item { VideoIdJumpItem() }
             item { VideoInfoInterfacesItem() }
             item { SaveEmojiItem() }
             item { TranslucentItem() }
@@ -505,6 +510,69 @@ class FreedomSettingActivity : XplerActivity() {
     }
 
     @Composable
+    private fun FavoriteAwemesItem() {
+        var showDialog by remember { mutableStateOf(false) }
+        var awemes by remember { mutableStateOf<List<FavoriteAweme>>(emptyList()) }
+        var refreshKey by remember { mutableIntStateOf(0) }
+
+        val count by produceState(initialValue = 0, key1 = showDialog, key2 = refreshKey) {
+            value = withContext(Dispatchers.IO) {
+                runCatching { FavoriteAwemeStore.all(this@FreedomSettingActivity).size }.getOrDefault(0)
+            }
+        }
+
+        ClickItem(
+            text = "收藏作品",
+            subtext = if (count > 0) {
+                "已收藏 $count 个作品，列表按标签分组，点击打开作品或删除"
+            } else {
+                "长按视频选「收藏作品」即可加入，可添加标签；数据保存在 awemes.json"
+            },
+            onClick = {
+                lifecycleScope.launch {
+                    awemes = withContext(Dispatchers.IO) {
+                        runCatching {
+                            FavoriteAwemeStore.all(this@FreedomSettingActivity)
+                        }.getOrDefault(emptyList())
+                    }
+                    showDialog = true
+                }
+            },
+        )
+
+        if (showDialog) {
+            FavoriteAwemesDialog(
+                awemes = awemes,
+                onDismiss = { showDialog = false },
+                onOpen = { aweme ->
+                    if (!aweme.open(this@FreedomSettingActivity)) {
+                        KToastUtils.show(application, "无法打开作品")
+                    }
+                },
+                onDelete = { aweme ->
+                    lifecycleScope.launch {
+                        val removed = withContext(Dispatchers.IO) {
+                            runCatching {
+                                FavoriteAwemeStore.remove(this@FreedomSettingActivity, aweme.key)
+                            }.getOrDefault(false)
+                        }
+                        awemes = withContext(Dispatchers.IO) {
+                            runCatching {
+                                FavoriteAwemeStore.all(this@FreedomSettingActivity)
+                            }.getOrDefault(emptyList())
+                        }
+                        refreshKey++
+                        KToastUtils.show(
+                            application,
+                            if (removed) "已删除 ${aweme.displayName.take(20)}" else "删除失败",
+                        )
+                    }
+                },
+            )
+        }
+    }
+
+    @Composable
     private fun VideoInfoInterfacesItem() {
         var showDialog by remember { mutableStateOf(false) }
 
@@ -599,6 +667,90 @@ class FreedomSettingActivity : XplerActivity() {
                             },
                             onValueChange = { value ->
                                 uid = value.filter { it.isDigit() }.take(20)
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun VideoIdJumpItem() {
+        var showDialog by remember { mutableStateOf(false) }
+        var videoId by remember { mutableStateOf("") }
+
+        ClickItem(
+            text = "视频ID跳转",
+            subtext = "手动输入作品 ID，直接打开对应视频",
+            onClick = {
+                videoId = ""
+                showDialog = true
+            },
+        )
+
+        if (showDialog) {
+            FMessageDialog(
+                title = "视频ID跳转",
+                cancel = "取消",
+                confirm = "跳转",
+                onCancel = { showDialog = false },
+                onConfirm = {
+                    val value = videoId.trim()
+                    if (value.isBlank()) {
+                        KToastUtils.show(application, "请输入视频ID")
+                    } else {
+                        val opened = runCatching {
+                            startActivity(
+                                Intent(
+                                    Intent.ACTION_VIEW,
+                                    Uri.parse("snssdk1128://aweme/detail/$value"),
+                                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            )
+                            true
+                        }.getOrDefault(false)
+                        if (opened) {
+                            showDialog = false
+                        } else {
+                            KToastUtils.show(application, "无法打开视频，请确认抖音已安装")
+                        }
+                    }
+                },
+            ) {
+                Column {
+                    Text(
+                        text = "输入纯数字作品 ID，可直接粘贴从「视频信息」里复制的视频ID。",
+                        style = MaterialTheme.typography.body2.copy(
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
+                        ),
+                    )
+                    FCard(
+                        modifier = Modifier.padding(top = 8.dp),
+                        border = FCardBorder(borderWidth = 1.0.dp),
+                    ) {
+                        BasicTextField(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            value = videoId,
+                            maxLines = 1,
+                            singleLine = true,
+                            textStyle = MaterialTheme.typography.body1,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            decorationBox = { innerTextField ->
+                                if (videoId.isEmpty()) {
+                                    Text(
+                                        text = "例如 7431075943976783113",
+                                        style = MaterialTheme.typography.body1.copy(
+                                            color = Color(0xFF999999),
+                                        ),
+                                    )
+                                }
+                                innerTextField()
+                            },
+                            onValueChange = { value ->
+                                videoId = value.filter { it.isDigit() }.take(20)
                             },
                         )
                     }
