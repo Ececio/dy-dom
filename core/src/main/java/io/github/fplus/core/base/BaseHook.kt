@@ -728,44 +728,56 @@ abstract class BaseHook : HookEntity() {
         content: View,
         ratio: Float = 0.55f,
     ) {
-        // post 可能早于首次测量，必须在完成布局后再算高度，否则内容会顶出屏幕
-        scroll.viewTreeObserver.addOnGlobalLayoutListener(
-            object : ViewTreeObserver.OnGlobalLayoutListener {
-                override fun onGlobalLayout() {
-                    if (root.height <= 0 || content.height <= 0) return
-                    scroll.viewTreeObserver.removeOnGlobalLayoutListener(this)
+        // 布局可能已经同步完成，也可能还没开始：监听 + post 双保险，谁先就绪谁执行
+        var applied = false
+        fun applyClamp() {
+            if (applied || root.height <= 0 || content.height <= 0) return
+            applied = true
 
-                    val screenHeight = context.resources.displayMetrics.heightPixels
-                    val contentHeight = content.height + scroll.paddingTop + scroll.paddingBottom
-                    val maxHeight = if (root.height <= 0) {
-                        (screenHeight * ratio).toInt()
-                    } else {
-                        // 可用高度 = 窗口高度 - 上下留白 - 标题/操作按钮/底部按钮
-                        val params = container.layoutParams as? ViewGroup.MarginLayoutParams
-                        val verticalMargins = (params?.topMargin ?: 0) + (params?.bottomMargin ?: 0)
-                        var fixedHeight = 0
-                        for (index in 0 until container.childCount) {
-                            val child = container.getChildAt(index)
-                            if (child === scroll || child.visibility == View.GONE) continue
-                            fixedHeight += child.height
-                        }
-                        val available = root.height - verticalMargins - fixedHeight -
-                            container.paddingTop - container.paddingBottom
-                        available.coerceAtLeast(
-                            (120 * context.resources.displayMetrics.density).toInt()
-                        )
-                    }
-                    val target = if (contentHeight > maxHeight) {
-                        maxHeight
-                    } else {
-                        ViewGroup.LayoutParams.WRAP_CONTENT
-                    }
-                    if (scroll.layoutParams?.height != target) {
-                        scroll.layoutParams = scroll.layoutParams.apply { height = target }
-                    }
+            val screenHeight = context.resources.displayMetrics.heightPixels
+            val contentHeight = content.height + scroll.paddingTop + scroll.paddingBottom
+            val maxHeight = if (root.height <= 0) {
+                (screenHeight * ratio).toInt()
+            } else {
+                // 可用高度 = 窗口高度 - 上下留白 - 标题/操作按钮/底部按钮
+                val params = container.layoutParams as? ViewGroup.MarginLayoutParams
+                val verticalMargins = (params?.topMargin ?: 0) + (params?.bottomMargin ?: 0)
+                var fixedHeight = 0
+                for (index in 0 until container.childCount) {
+                    val child = container.getChildAt(index)
+                    if (child === scroll || child.visibility == View.GONE) continue
+                    fixedHeight += child.height
                 }
+                val available = root.height - verticalMargins - fixedHeight -
+                    container.paddingTop - container.paddingBottom
+                available.coerceAtLeast(
+                    (120 * context.resources.displayMetrics.density).toInt()
+                )
             }
-        )
+            val target = if (contentHeight > maxHeight) {
+                maxHeight
+            } else {
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            }
+            if (scroll.layoutParams?.height != target) {
+                scroll.layoutParams = scroll.layoutParams.apply { height = target }
+            }
+        }
+
+        val listener = object : ViewTreeObserver.OnGlobalLayoutListener {
+            override fun onGlobalLayout() {
+                if (root.height <= 0 || content.height <= 0) return
+                applyClamp()
+                scroll.viewTreeObserver.removeOnGlobalLayoutListener(this)
+            }
+        }
+        scroll.viewTreeObserver.addOnGlobalLayoutListener(listener)
+        scroll.post {
+            applyClamp()
+            if (applied) {
+                scroll.viewTreeObserver.removeOnGlobalLayoutListener(listener)
+            }
+        }
     }
 
     fun showProgressDialog(
