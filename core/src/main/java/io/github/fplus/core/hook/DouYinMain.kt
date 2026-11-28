@@ -56,7 +56,8 @@ class DouYinMain(private val app: Application) {
             // search and hook
             DexkitBuilder.running(
                 app = app,
-                version = 30,
+                // 40.6.0 适配：搜索条件大面积调整，版本号 +1 强制重新搜索
+                version = 31,
                 searchBefore = {
                     HPhoneWindow()
                     HActivity()
