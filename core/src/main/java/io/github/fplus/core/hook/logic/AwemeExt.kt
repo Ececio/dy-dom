@@ -2,12 +2,15 @@ package io.github.fplus.core.hook.logic
 
 import android.content.Context
 import com.freegang.extension.format
+import com.ss.android.ugc.aweme.base.model.UrlModel
 import com.ss.android.ugc.aweme.feed.model.Aweme
 import com.ss.android.ugc.aweme.feed.model.BitRate
+import com.ss.android.ugc.aweme.feed.model.Video
 import com.ss.ugc.aweme.ImageUrlStruct
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import java.io.ByteArrayOutputStream
+import java.lang.reflect.Field
 import java.lang.reflect.Modifier
 import java.net.HttpURLConnection
 import java.net.URL
@@ -177,10 +180,8 @@ suspend fun Aweme.videoInfoText(context: Context): String = coroutineScope {
 
     duration?.takeIf { it > 0 }?.let { lines += "时长: ${formatDuration(it)}" }
 
-    video?.let {
-        if (it.width > 0 && it.height > 0) {
-            lines += "分辨率: ${it.width}×${it.height}"
-        }
+    video?.videoUrlModels()?.firstOrNull { it.width > 0 && it.height > 0 }?.let {
+        lines += "分辨率: ${it.width}×${it.height}"
     }
 
     music?.let {
@@ -397,20 +398,81 @@ private fun Any.getTextValue(vararg names: String): String? {
     return getFieldValue(*names)?.toString()?.takeIf { it.isNotBlank() }
 }
 
-fun Aweme.getH265VideoUrlList(): List<String> {
-    val video = video ?: return emptyList()
-    return video.playAddrH265?.urlList ?: emptyList()
+/*
+ * 40.6.0 起 Video 的播放地址/码率字段全部被混淆（playAddr -> a、playAddrH265 -> b、
+ * bitRate -> y 之类），直接按字段名访问会抛 NoSuchFieldError。
+ *
+ * 这里改成运行时反射：先按类型找出所有 UrlModel 字段，再按 urlKey 里的 h264/bytevc1
+ * 标记区分编码；码率档位则找出元素类型为 BitRate 的 List 字段。字段名再变也不影响。
+ */
+private val videoUrlModelFields: List<Field> by lazy {
+    Video::class.java.declaredFields
+        .filter { UrlModel::class.java.isAssignableFrom(it.type) }
+        .onEach { runCatching { it.isAccessible = true } }
 }
 
-fun Aweme.getH264VideoUrlList(): List<String> {
-    val video = video ?: return emptyList()
-    return video.h264PlayAddr?.urlList ?: emptyList()
+private val videoListFields: List<Field> by lazy {
+    Video::class.java.declaredFields
+        .filter { List::class.java.isAssignableFrom(it.type) }
+        .onEach { runCatching { it.isAccessible = true } }
 }
 
-fun Aweme.getAutoVideoUrlList(): List<String> {
-    val video = video ?: return emptyList()
-    return video.playAddr?.urlList ?: emptyList()
+private fun Video.videoUrlModels(): List<UrlModel> {
+    val all = videoUrlModelFields.mapNotNull { field ->
+        runCatching { field.get(this) as? UrlModel }.getOrNull()
+    }.filter { model -> model.urlList.orEmpty().any { it.isNotBlank() } }
+
+    val playable = all.filter { model ->
+        model.urlList.orEmpty().any { url ->
+            url.contains("/video/tos/") || url.contains("douyinvod")
+        }
+    }
+    // 兜底：排除封面图（douyinpic）后剩下的地址
+    return playable.ifEmpty {
+        all.filter { model -> model.urlList.orEmpty().none { it.contains("douyinpic") } }
+    }
 }
+
+private fun Video.videoUrlModelsByKey(vararg markers: String): List<UrlModel> {
+    return videoUrlModels().filter { model ->
+        val key = model.urlKey.orEmpty()
+        markers.any { key.contains(it, ignoreCase = true) }
+    }
+}
+
+private fun List<UrlModel>.flatUrls(): List<String> {
+    return flatMap { it.urlList.orEmpty() }.filter { it.isNotBlank() }
+}
+
+/** 视频的码率档位列表（BitRate.playAddr / playAddr265 字段名在 40.6.0 未被混淆） */
+fun Video.gears(): List<BitRate> {
+    for (field in videoListFields) {
+        val list = runCatching { field.get(this) as? List<*> }.getOrNull() ?: continue
+        if (list.firstOrNull() is BitRate) return list.filterIsInstance<BitRate>()
+    }
+    return emptyList()
+}
+
+fun Video.h265UrlList(): List<String> {
+    return videoUrlModelsByKey("bytevc1", "h265").flatUrls()
+}
+
+fun Video.h264UrlList(): List<String> {
+    return videoUrlModelsByKey("h264").flatUrls()
+}
+
+fun Video.autoUrlList(): List<String> {
+    val models = videoUrlModels()
+    val preferred = models.firstOrNull { it.urlKey.orEmpty().contains("h264", true) }
+        ?: models.firstOrNull()
+    return listOfNotNull(preferred).flatUrls()
+}
+
+fun Aweme.getH265VideoUrlList(): List<String> = video?.h265UrlList().orEmpty()
+
+fun Aweme.getH264VideoUrlList(): List<String> = video?.h264UrlList().orEmpty()
+
+fun Aweme.getAutoVideoUrlList(): List<String> = video?.autoUrlList().orEmpty()
 
 /** 按编码类型取播放地址(不含清晰度排序) */
 fun Aweme.getVideoUrlList(coding: String): List<String> {
@@ -440,7 +502,7 @@ fun Aweme.getVideoUrlCandidates(coding: String, best: Boolean): List<String> {
     if (best) {
         // 档位按分辨率从高到低；同一档位里优先用所选编码，缺地址时再用另一编码
         // （高分辨率档位的另一种编码，仍然比低分辨率档位清晰）
-        val gears = video.bitRate.orEmpty().sortedWith(gearComparator)
+        val gears = video.gears().sortedWith(gearComparator)
         for (gear in gears) {
             val ordered = when (coding) {
                 "H265" -> listOfNotNull(gear.playAddr265, gear.playAddr)
@@ -464,12 +526,13 @@ fun Aweme.getVideoUrlCandidates(coding: String, best: Boolean): List<String> {
 /** 清晰度信息，用于日志确认是否拿到了最高档位 */
 fun Aweme.videoQualityInfo(coding: String, best: Boolean): String {
     val video = video ?: return "video=null"
-    val gears = video.bitRate.orEmpty()
+    val gears = video.gears()
     val top = gears.sortedWith(gearComparator).firstOrNull()
+    val size = video.videoUrlModels().firstOrNull { it.width > 0 && it.height > 0 }
     return buildString {
         append("coding=").append(coding)
         append(", best=").append(best)
-        append(", size=").append(video.width).append("x").append(video.height)
+        append(", size=").append(size?.width ?: 0).append("x").append(size?.height ?: 0)
         append(", gears=").append(gears.size)
         if (top != null) {
             append(", topGear=").append(top.gearName)

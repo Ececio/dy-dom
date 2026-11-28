@@ -44,7 +44,7 @@ class SaveCommentLogic(
 
     private fun getVideoUrlList(aweme: Aweme): List<String> {
         val video = aweme.video ?: return emptyList()
-        return video.playAddrH265?.urlList ?: video.h264PlayAddr?.urlList ?: emptyList()
+        return video.h265UrlList().ifEmpty { video.h264UrlList() }
     }
 
     private fun getImagesUrlList(aweme: Aweme): List<String> {
