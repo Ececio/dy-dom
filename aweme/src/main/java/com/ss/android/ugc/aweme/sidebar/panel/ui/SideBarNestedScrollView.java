@@ -1,4 +1,4 @@
-package com.ss.android.ugc.aweme.sidebar;
+package com.ss.android.ugc.aweme.sidebar.panel.ui;
 
 import android.content.Context;
 import android.util.AttributeSet;

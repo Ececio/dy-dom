@@ -214,47 +214,47 @@ class HVerticalViewPager : BaseHook() {
     }
 
     override fun onInit() {
-        DexkitBuilder.recommendFeedFetchPresenterClazz?.runCatching {
-            lparam.hookClass(this)
-                .method("onSuccess") {
+        // 40.6.0：RecommendFeedFetchPresenter / FullFeedFollowFetchPresenter 已删除，
+        // 改为在数据模型写入列表时过滤（推荐流 + 关注流）。
+        runCatching {
+            lparam.hookClass("com.ss.android.ugc.aweme.feed.presenter.RecommendFeedFetchModelV2")
+                .method("setItems") {
                     onBefore {
                         if (!config.isVideoFilter) return@onBefore
 
-                        val mModel = thisObject?.findFieldGetValue<Any> { name("mModel") }
-                        val mData = mModel?.findFieldGetValue<Any> { name("mData") }
-                        if (mData?.javaClass?.name?.contains("FeedItemList") == true) {
-                            val items = mData.findFieldGetValue<List<Aweme>> { name("items") } ?: emptyList()
-                            if (items.size < 3) return@onBefore
+                        val list = args.firstOrNull() as? List<*> ?: return@onBefore
+                        val awemes = list.filterIsInstance<Aweme>()
+                        if (awemes.size < 3) return@onBefore
 
-                            mData.findFieldSetValue(filterAwemeList(items)) { name("items") }
-                            // val array = items.map { it.sortString() }.toTypedArray()
-                            // XplerLog.tagD(TAG, arrayOf("推荐视频列表", array.joinToString("\n")))
-                        }
+                        args[0] = filterAwemeList(awemes)
                     }
                 }
-        }?.onFailure {
+        }.onFailure {
             XplerLog.e(it)
         }
 
-        DexkitBuilder.fullFeedFollowFetchPresenterClazz?.runCatching {
-            lparam.hookClass(this)
-                .method("onSuccess") {
+        runCatching {
+            lparam.hookClass("com.ss.android.ugc.aweme.feed.model.FamiliarFeedModel")
+                .method("setItems") {
                     onBefore {
                         if (!config.isVideoFilter) return@onBefore
 
-                        val mModel = thisObject?.findFieldGetValue<Any> { name("mModel") }
-                        val mData = mModel?.findFieldGetValue<Any> { name("mData") }
-                        if (mData?.javaClass?.name?.contains("FollowFeedList") == true) {
-                            val mItems = mData.findFieldGetValue<List<FollowFeed>> { name("mItems") } ?: emptyList()
-                            if (mItems.size < 3) return@onBefore
+                        val list = args.firstOrNull() as? List<*> ?: return@onBefore
+                        if (list.size < 3) return@onBefore
 
-                            mData.findFieldSetValue(filterFollowFeedList(mItems)) { name("mItems") }
-                            // val array = mItems.map { it.aweme.sortString() }.toTypedArray()
-                            // XplerLog.tagD(TAG, arrayOf("关注视频列表", array.joinToString("\n")))
+                        val followFeeds = list.filterIsInstance<FollowFeed>()
+                        if (followFeeds.isNotEmpty()) {
+                            args[0] = filterFollowFeedList(followFeeds)
+                            return@onBefore
+                        }
+
+                        val awemes = list.filterIsInstance<Aweme>()
+                        if (awemes.isNotEmpty()) {
+                            args[0] = filterAwemeList(awemes)
                         }
                     }
                 }
-        }?.onFailure {
+        }.onFailure {
             XplerLog.e(it)
         }
     }

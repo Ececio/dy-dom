@@ -24,8 +24,10 @@ class HPlayerController : BaseHook() {
     private val config get() = ConfigV1.get()
 
     override fun setTargetClass(): Class<*> {
+        // 40.6.0：PlayerController 已删除，播放状态改由 PMPlayListenerDispatcherV2 分发，
+        // 方法名（onPlaying/onResumePlay/onPausePlay/onPlayProgressChange...）保持不变。
         return runCatching {
-            findClass("com.ss.android.ugc.aweme.feed.controller.PlayerController")
+            findClass("com.ss.android.ugc.aweme.feed.controller.refactor.impl_pm.PMPlayListenerDispatcherV2")
         }.getOrDefault(EmptyHook::class.java)
     }
 

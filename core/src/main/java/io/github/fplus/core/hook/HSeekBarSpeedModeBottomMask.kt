@@ -10,6 +10,7 @@ import io.github.fplus.core.config.ConfigV1
 import io.github.fplus.core.helper.DexkitBuilder
 import io.github.xpler.core.XplerLog
 import io.github.xpler.core.entity.CallMethods
+import io.github.xpler.core.entity.NoneHook
 import io.github.xpler.core.hookBlockRunning
 import io.github.xpler.core.hookClass
 import io.github.xpler.core.lparam
@@ -20,7 +21,9 @@ class HSeekBarSpeedModeBottomMask : BaseHook(), CallMethods {
     private val config: ConfigV1 get() = ConfigV1.get()
 
     override fun setTargetClass(): Class<*> {
-        return findClass("com.ss.android.ugc.aweme.feed.ui.seekbar.ui.SeekBarSpeedModeBottomMask")
+        // 40.6.0：SeekBarSpeedModeBottomMask 已删除。
+        // 沉浸式背景透明仍由 init 中对 getMBottomLayout() 的 hook 完成。
+        return NoneHook::class.java
     }
 
     init {

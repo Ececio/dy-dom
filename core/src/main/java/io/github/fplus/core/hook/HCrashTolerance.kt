@@ -1,6 +1,5 @@
 package io.github.fplus.core.hook
 
-import com.ss.android.ugc.aweme.feed.model.VideoItemParams
 import com.ss.android.ugc.aweme.kiwi.model.QModel
 import io.github.fplus.core.base.BaseHook
 import io.github.fplus.core.config.ConfigV1
@@ -66,8 +65,10 @@ class HCrashTolerance {
             return DexkitBuilder.tabLandingClazz ?: NoneHook::class.java
         }
 
+        // 40.6.0 的 TabLandGuideVideoViewHolder 不再有 VideoItemParams 参数方法，
+        // 这里改为匹配所有单参数方法（bind(Aweme) 等），继续做崩溃拦截。
         @OnAfter
-        fun methodAfter(params: MethodParam, item: VideoItemParams?) {
+        fun methodAfter(params: MethodParam, @Param("null") item: Any?) {
             hookBlockRunning(params) {
                 resultOrThrowable
             }.onFailure {

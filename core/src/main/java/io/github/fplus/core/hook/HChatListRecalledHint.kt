@@ -34,9 +34,9 @@ class HChatListRecalledHint : BaseHook() {
             }
 
             if (!config.preventRecalledOtherSetting.getOrElse(0) { false }) {
-                val message = thisObject!!.findMethodInvoke<Any> {
-                    returnType(Message::class.java, true)
-                    predicate { it.parameterTypes.isEmpty() }
+                // 40.6.0：RecallCellUI 继承 SystemCellUI，Message 保存在父类字段中
+                val message = thisObject!!.findFieldGetValue<Message> {
+                    type(Message::class.java, true)
                 }
                 val isSelf = message?.findMethodInvoke<Boolean> { name("isSelf") }
                 if (isSelf == true)

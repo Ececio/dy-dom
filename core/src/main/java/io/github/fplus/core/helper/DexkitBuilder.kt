@@ -44,10 +44,7 @@ object DexkitBuilder {
     var conversationFragmentClazz: Class<*>? = null
     var seekBarSpeedModeBottomContainerClazz: Class<*>? = null
     var abstractFeedAdapterClazz: Class<*>? = null
-    var recommendFeedFetchPresenterClazz: Class<*>? = null
-    var fullFeedFollowFetchPresenterClazz: Class<*>? = null
     var detailPageFragmentClazz: Class<*>? = null
-    var emojiPopupWindowClazz: Class<*>? = null
     var bottomCtrlBarClazz: Class<*>? = null
     var chatListRecyclerViewAdapterClazz: Class<*>? = null
     var chatListRecyclerViewAdapterNewClazz: Class<*>? = null
@@ -111,36 +108,16 @@ object DexkitBuilder {
         DexKitBridge.create(lparam.appInfo.sourceDir).use { bridge ->
             val sideBarNestedScrollView = bridge.findClass {
                 matcher {
-                    className = "com.ss.android.ugc.aweme.sidebar.SideBarNestedScrollView"
+                    className = "com.ss.android.ugc.aweme.sidebar.panel.ui.SideBarNestedScrollView"
                 }
             }
             sideBarNestedScrollViewClazz = sideBarNestedScrollView.instance("sideBarNestedScrollView")
 
             val cornerExtensionsPopupWindow = bridge.findClass {
+                // 40.6.0：字段 Dialog 改为 SimpleDoubleBallDialog，类名未混淆，直接按类名定位
                 matcher {
-                    superClass = "android.widget.PopupWindow"
-                    fields {
-                        add {
-                            type = "android.view.LayoutInflater"
-                        }
-                        add {
-                            type = "android.app.Dialog"
-                        }
-                    }
-                    methods {
-                        add {
-                            paramTypes = listOf("android.widget.PopupWindow")
-                        }
-                        add {
-                            paramTypes = listOf("boolean")
-                        }
-                        add {
-                            returnType = "android.view.View"
-                        }
-                        add {
-                            name = "dismiss"
-                        }
-                    }
+                    className =
+                        "com.ss.android.ugc.aweme.familiar.widget.CornerExtensionsOperationsPopupWindow"
                 }
             }
             cornerExtensionsPopupWindowClazz = cornerExtensionsPopupWindow.instance("coenerExtendsionsPoupWindow")
@@ -164,61 +141,25 @@ object DexkitBuilder {
             mainBottomPhotoTabClazz = mainBottomPhotoTab.instance("mainBottomPhotoTab")
 
             val commentListPageFragment = bridge.findClass {
+                // 40.6.0：VideoCommentPageParam 已混淆，直接按未混淆的类名定位
                 matcher {
-                    fields {
-                        add {
-                            type = "com.ss.android.ugc.aweme.comment.widget.CommentNestedLayout"
-                        }
-                        add {
-                            type = "com.ss.android.ugc.aweme.comment.param.VideoCommentPageParam"
-                        }
-                    }
-
-                    // methods {
-                    //     add {
-                    //         returnType = "com.ss.android.ugc.aweme.comment.constants.CommentColorMode"
-                    //     }
-                    // }
-
-                    usingStrings = listOf(
-                        "com/ss/android/ugc/aweme/comment/ui/CommentListPageFragment",
-                        "CommentListPageFragment",
-                    )
+                    className = "com.ss.android.ugc.aweme.comment.ui.CommentListPageFragment"
                 }
             }
             commentListPageFragmentClazz = commentListPageFragment.instance("commentListPageFragment")
 
             val commentColorModeViewMode = bridge.findClass {
+                // 40.6.0：CommentColorMode 已混淆，改为直接按未混淆的 ViewModel 类名定位
                 matcher {
-                    superClass = "androidx.lifecycle.ViewModel"
-                    methods {
-                        add {
-                            returnType = "com.ss.android.ugc.aweme.comment.constants.CommentColorMode"
-                        }
-
-                        add {
-                            paramTypes = listOf("com.ss.android.ugc.aweme.comment.constants.CommentColorMode")
-                        }
-                    }
+                    className = "com.ss.android.ugc.aweme.comment.viewmodel.CommentColorViewModel"
                 }
             }
             commentColorModeViewModeClazz = commentColorModeViewMode.instance("commentColorModeViewMode")
 
             val conversationFragment = bridge.findClass {
+                // 40.6.0：ConversationFragment 改名为 CommentInputFragment
                 matcher {
-                    fields {
-                        add {
-                            type = "com.ss.android.ugc.aweme.conversation.CommentConversationLayout"
-                        }
-                        add {
-                            type = "com.ss.android.ugc.aweme.comment.widget.CommentNestedLayout"
-                        }
-                    }
-
-                    usingStrings = listOf(
-                        "com/ss/android/ugc/aweme/comment/ui/ConversationFragment",
-                        "ConversationFragment",
-                    )
+                    className = "com.ss.android.ugc.aweme.comment.ui.CommentInputFragment"
                 }
             }
             conversationFragmentClazz = conversationFragment.instance("conversationFragment")
@@ -250,66 +191,11 @@ object DexkitBuilder {
             }
             abstractFeedAdapterClazz = abstractFeedAdapter.instance("abstractFeedAdapter")
 
-            val recommendFeedFetchPresenter = bridge.findClass {
-                matcher {
-                    methods {
-                        add {
-                            name = "onSuccess"
-                        }
-                    }
-                    addUsingString("com.ss.android.ugc.aweme.feed.presenter.RecommendFeedFetchPresenter")
-                    addUsingString("enter_from")
-                    addUsingString("homepage_hot")
-                }
-            }
-            recommendFeedFetchPresenterClazz =
-                recommendFeedFetchPresenter.instance("recommendFeedFetchPresenter")
+            // 40.6.0：RecommendFeedFetchPresenter / FullFeedFollowFetchPresenter 已删除，
+            // 视频过滤改为在 HVerticalViewPager 中 hook 数据模型的 setItems。
 
-            val fullFeedFollowFetchPresenter = bridge.findClass {
-                matcher {
-                    methods {
-                        add {
-                            name = "onSuccess"
-                        }
-                    }
-                    addUsingString("com.ss.android.ugc.aweme.feed.presenter.FullFeedFollowFetchPresenter")
-                    addUsingString("enter_from")
-                    addUsingString("homepage_follow")
-                }
-            }
-            fullFeedFollowFetchPresenterClazz =
-                fullFeedFollowFetchPresenter.instance("fullFeedFollowFetchPresenter")
-
-            val emojiPopupWindow = bridge.findClass {
-                matcher {
-                    methods {
-                        add {
-                            modifiers = Modifier.PRIVATE
-                            returnType = "com.ss.android.ugc.aweme.base.ui.RemoteImageView"
-                        }
-                        add {
-                            modifiers = Modifier.PRIVATE
-                            returnType = "com.bytedance.ies.dmt.ui.widget.DmtTextView"
-                        }
-                        add {
-                            modifiers = Modifier.PUBLIC
-                            paramTypes = listOf("android.content.Context")
-                        }
-                        add {
-                            modifiers = Modifier.PRIVATE
-                            paramTypes = listOf("com.ss.android.ugc.aweme.emoji.base.BaseEmoji")
-                        }
-                        add {
-                            modifiers = Modifier.PRIVATE
-                            paramTypes = listOf(
-                                "com.ss.android.ugc.aweme.emoji.base.BaseEmoji",
-                                "com.ss.android.ugc.aweme.base.ui.RemoteImageView",
-                            )
-                        }
-                    }
-                }
-            }
-            emojiPopupWindowClazz = emojiPopupWindow.instance("emojiPopupWindow")
+            // 40.6.0：表情面板弹窗已改为 Compose 实现，原 RemoteImageView + DmtTextView
+            // 的 PopupWindow 已不存在，HEmojiPopupWindow 自动降级为 NoneHook。
 
             val seekBarSpeedModeBottomContainer = bridge.findClass {
                 // findFirst = true
@@ -334,6 +220,7 @@ object DexkitBuilder {
                 seekBarSpeedModeBottomContainer.instance("seekBarSpeedModeBottomContainer")
 
             val mainBottomTabView = bridge.findClass {
+                // 40.6.0：getBottomColor 已删除，改用 getMaskAlpha/setMaskAlpha 等未混淆方法定位
                 matcher {
                     superClass = "android.widget.FrameLayout"
 
@@ -344,9 +231,6 @@ object DexkitBuilder {
                     }
 
                     methods {
-                        add {
-                            name = "getBottomColor"
-                        }
                         add {
                             name = "setBackgroundDrawable"
                             paramTypes = listOf("android.graphics.drawable.Drawable")
@@ -363,37 +247,25 @@ object DexkitBuilder {
                         add {
                             name = "setAlpha"
                         }
-                    }
-
-                    usingStrings {
-                        add("alpha", StringMatchType.Equals)
-                        add("translationY", StringMatchType.Equals)
-                        add("MainBottomTabView", StringMatchType.Equals)
+                        add {
+                            name = "getMaskAlpha"
+                            returnType = "float"
+                        }
+                        add {
+                            name = "setMaskAlpha"
+                            paramTypes = listOf("float")
+                        }
                     }
                 }
             }
             mainBottomTabViewClazz = mainBottomTabView.instance("mainBottomTabView")
 
             val bottomCtrlBar = bridge.findClass {
-                searchPackages("X")
+                // 40.6.0：IPauseCtrlAction 已删除，暂停模式底部控制栏改由
+                // FeedPauseModeBottomBarAnimationPresenter 负责展示/隐藏
                 matcher {
-                    superClass = "android.widget.FrameLayout"
-                    fields {
-                        add {
-                            annotations {
-                                add {
-                                    type = "dalvik.annotation.Signature"
-                                    addElement {
-                                        name = "value"
-                                        arrayValue {
-                                            addString("IPauseCtrlAction")
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
+                    className =
+                        "com.ss.android.ugc.aweme.feed.pause_mode.framework.feed.ui.FeedPauseModeBottomBarAnimationPresenter"
                 }
             }
             bottomCtrlBarClazz = bottomCtrlBar.instance("bottomCtrlBar")
@@ -441,7 +313,8 @@ object DexkitBuilder {
                     }
 
                     addMethod {
-                        returnType = "com.ss.android.ugc.aweme.rips.InjectionAware"
+                        // 40.6.0：rips.InjectionAware 已混淆为 X.1Mas，CellComposeAdapter 仍返回它
+                        returnType = "X.1Mas"
                     }
 
                     addMethod {
@@ -460,37 +333,10 @@ object DexkitBuilder {
             chatListRecyclerViewAdapterNewClazz = chatListRecyclerViewAdapterNew.instance("chatListRecyclerViewAdapterNew")
 
             val chatListRecalledHint = bridge.findClass {
+                // 40.6.0：getFastEventBusSubscriberClass 已删除，撤回消息 Cell 改名为 RecallCellUI
                 matcher {
-                    fields {
-                        add {
-                            type = "android.widget.TextView"
-                        }
-
-                        add {
-                            type = "com.ss.android.ugc.aweme.views.InterceptTouchLinearLayout"
-                        }
-
-                        add {
-                            type {
-                                superClass = "androidx.lifecycle.ViewModel"
-                            }
-                        }
-                    }
-
-                    methods {
-                        add {
-                            name = "getFastEventBusSubscriberClass"
-                            returnType = "java.lang.Class"
-                        }
-
-                        add {
-                            paramTypes = listOf(
-                                null,
-                                "int",
-                                "java.util.List"
-                            )
-                        }
-                    }
+                    className =
+                        "com.ss.android.ugc.aweme.im.business.chat.msgcell.common.content.onlymigration.recall.RecallCellUI"
                 }
             }
             chatListRecalledHintClazz = chatListRecalledHint.instance("chatListRecalledHint")
@@ -614,26 +460,10 @@ object DexkitBuilder {
             livePhotoClazz = livePhoto.instance("livePhoto")
 
             val tabLanding = bridge.findClass {
+                // 40.6.0：TabLandGuideTriggerEventType 已混淆，改为直接按未混淆的 ViewHolder 类名定位
                 matcher {
-                    fields {
-                        add {
-                            type =
-                                "com.ss.android.ugc.aweme.feed.plato.business.mainarchitecture.tablandguide.TabLandGuideTriggerEventType"
-                        }
-                        add {
-                            type = "com.bytedance.dux.image.DuxImageView"
-                        }
-
-                        add {
-                            type = "com.ss.android.ugc.aweme.feed.model.VideoItemParams"
-                        }
-                    }
-                    methods {
-                        add {
-                            paramTypes = listOf("com.ss.android.ugc.aweme.feed.model.VideoItemParams")
-                        }
-                    }
-                    usingStrings = listOf("TabLandGuidePresenter", "tabLandingActionBtn")
+                    className =
+                        "com.ss.android.ugc.aweme.feed.plato.business.mainarchitecture.tablandguide.viewholder.TabLandGuideVideoViewHolder"
                 }
             }
             tabLandingClazz = tabLanding.instance("tabLanding")
@@ -721,9 +551,6 @@ object DexkitBuilder {
         conversationFragmentClazz = classCache.getStringOrDefault("conversationFragment").loadOrFindClass()
         seekBarSpeedModeBottomContainerClazz = classCache.getStringOrDefault("seekBarSpeedModeBottomContainer").loadOrFindClass()
         abstractFeedAdapterClazz = classCache.getStringOrDefault("abstractFeedAdapter").loadOrFindClass()
-        recommendFeedFetchPresenterClazz = classCache.getStringOrDefault("recommendFeedFetchPresenter").loadOrFindClass()
-        fullFeedFollowFetchPresenterClazz = classCache.getStringOrDefault("fullFeedFollowFetchPresenter").loadOrFindClass()
-        emojiPopupWindowClazz = classCache.getStringOrDefault("emojiPopupWindow").loadOrFindClass()
         detailPageFragmentClazz = classCache.getStringOrDefault("detailPageFragment").loadOrFindClass()
         bottomCtrlBarClazz = classCache.getStringOrDefault("bottomCtrlBar").loadOrFindClass()
         chatListRecyclerViewAdapterClazz = classCache.getStringOrDefault("chatListRecyclerViewAdapter").loadOrFindClass()

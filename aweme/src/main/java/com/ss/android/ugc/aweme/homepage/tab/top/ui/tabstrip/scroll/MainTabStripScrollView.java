@@ -1,4 +1,4 @@
-package com.ss.android.ugc.aweme.homepage.ui.view;
+package com.ss.android.ugc.aweme.homepage.tab.top.ui.tabstrip.scroll;
 
 import android.content.Context;
 import android.util.AttributeSet;

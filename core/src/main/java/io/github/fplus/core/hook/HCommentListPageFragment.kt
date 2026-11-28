@@ -4,7 +4,6 @@ import android.os.Bundle
 import android.view.View
 import com.freegang.extension.forEachWhereChild
 import com.freegang.extension.removeInParent
-import com.ss.android.ugc.aweme.comment.constants.CommentColorMode
 import io.github.fplus.core.base.BaseHook
 import io.github.fplus.core.config.ConfigV1
 import io.github.fplus.core.helper.DexkitBuilder
@@ -51,28 +50,29 @@ class HCommentListPageFragment : BaseHook() {
             return DexkitBuilder.commentColorModeViewModeClazz ?: NoneHook::class.java
         }
 
+        // 40.6.0 中 CommentColorMode 已混淆为 LX/0dQI;，方法名也变成 tA，
+        // 因此不再写死类型/方法名：只匹配该 ViewModel 唯一的一参方法，
+        // 再用参数本身拿枚举常量，避免版本变化后类加载失败。
         @OnBefore
         fun setCommentColorModeBefore(
             params: MethodParam,
-            mode: CommentColorMode,
+            @Param("null") mode: Any?,
         ) {
             hookBlockRunning(params) {
                 if (!config.isCommentColorMode)
                     return
 
-                args[0] = when (config.commentColorMode) {
-                    0 -> {
-                        CommentColorMode.MODE_LIGHT
-                    }
+                val enumClass = args[0]?.javaClass ?: return
+                val constants = enumClass.enumConstants ?: return
+                if (constants.isEmpty())
+                    return
 
-                    1 -> {
-                        CommentColorMode.MODE_DARK
-                    }
-
-                    else -> {
-                        CommentColorMode.MODE_LIGHT_OR_DARK
-                    }
+                val index = when (config.commentColorMode) {
+                    0 -> 0 // MODE_LIGHT
+                    1 -> 1 // MODE_DARK
+                    else -> 2 // MODE_LIGHT_OR_DARK
                 }
+                args[0] = constants.getOrNull(index) ?: return
             }.onFailure {
                 XplerLog.e(it)
             }

@@ -21,8 +21,6 @@ import com.freegang.extension.isDarkMode
 import com.freegang.extension.parentView
 import com.freegang.extension.postRunning
 import com.freegang.extension.removeInParent
-import com.ss.android.ugc.aweme.homepage.ui.titlebar.MainTitleBar
-import com.ss.android.ugc.aweme.homepage.ui.view.MainTabStripScrollView
 import com.ss.android.ugc.aweme.main.MainActivity
 import io.github.fplus.core.base.BaseHook
 import io.github.fplus.core.config.ConfigV1
@@ -143,33 +141,41 @@ class HMainActivity : BaseHook() {
 
     private fun initView(activity: Activity) {
         activity.contentView.postRunning {
-            it.forEachChild { child ->
-                // 新版本顶栏不居中
-                if (child is MainTabStripScrollView) {
-                    val lp = child.layoutParams
-                    if (lp is RelativeLayout.LayoutParams) {
-                        child.layoutParams = lp.apply {
-                            this.addRule(RelativeLayout.CENTER_IN_PARENT)
+            // 宿主类名随版本变化，这里全部按类名匹配，
+            // 避免直接引用某个版本已删除的类导致 NoClassDefFoundError 崩溃
+            runCatching {
+                it.forEachChild { child ->
+                    val className = child.javaClass.name
+
+                    // 新版本顶栏不居中
+                    if (className.endsWith(".MainTabStripScrollView")) {
+                        val lp = child.layoutParams
+                        if (lp is RelativeLayout.LayoutParams) {
+                            child.layoutParams = lp.apply {
+                                this.addRule(RelativeLayout.CENTER_IN_PARENT)
+                            }
                         }
+                    }
+
+                    if (className.endsWith(".MainTitleBar")) {
+                        mainTitleBar = child
+                    }
+
+                    if (DexkitBuilder.mainBottomTabViewClazz?.name == className) {
+                        bottomTabView = child
+                    }
+
+                    if (className.contains("DisallowInterceptRelativeLayout")) {
+                        disallowInterceptRelativeLayout = child
                     }
                 }
 
-                if (child is MainTitleBar) {
-                    mainTitleBar = child
-                }
-
-                if (DexkitBuilder.mainBottomTabViewClazz?.name == child.javaClass.name) {
-                    bottomTabView = child
-                }
-
-                if (child.javaClass.name.contains("DisallowInterceptRelativeLayout")) {
-                    disallowInterceptRelativeLayout = child
-                }
+                initMainTitleBar()
+                initBottomTabView()
+                initDisallowInterceptRelativeLayout()
+            }.onFailure {
+                XplerLog.e(it)
             }
-
-            initMainTitleBar()
-            initBottomTabView()
-            initDisallowInterceptRelativeLayout()
         }
     }
 

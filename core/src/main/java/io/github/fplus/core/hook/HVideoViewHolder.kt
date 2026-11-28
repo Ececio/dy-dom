@@ -299,25 +299,18 @@ class HVideoViewHolder : BaseHook() {
         }
     }
 
-    @OnAfter
-    fun startStayTime(params: MethodParam, long: Long?) {
-        hookBlockRunning(params) {
-            // XplerLog.d("long: $long")
-            changeFeedRightScaleView(params)
-            changeFeedRightScaleViewAlpha(params)
-            adjustMusicContainer(params)
-            addAutoPlayButtonView(params)
-        }.onFailure {
-            XplerLog.e(it)
-        }
-    }
-
     @OnAfter("onViewHolderSelected")
     fun onViewHolderSelectedAfter(params: MethodParam, index: Int) {
         hookBlockRunning(params) {
             // XplerLog.d("onViewHolderSelected")
             val container = getWidgetContainer(params)
             addOnDraw(container)
+
+            // 40.6.0 已删除 startStayTime，原逻辑并入选中回调
+            changeFeedRightScaleView(params)
+            changeFeedRightScaleViewAlpha(params)
+            adjustMusicContainer(params)
+            addAutoPlayButtonView(params)
         }.onFailure {
             XplerLog.e(it)
         }

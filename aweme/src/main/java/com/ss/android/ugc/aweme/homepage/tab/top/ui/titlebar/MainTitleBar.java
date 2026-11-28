@@ -1,4 +1,4 @@
-package com.ss.android.ugc.aweme.homepage.ui.titlebar;
+package com.ss.android.ugc.aweme.homepage.tab.top.ui.titlebar;
 
 import android.content.Context;
 import android.util.AttributeSet;

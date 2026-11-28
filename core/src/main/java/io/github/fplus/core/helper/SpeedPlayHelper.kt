@@ -4,7 +4,6 @@ import android.app.Activity
 import android.content.Context
 import com.freegang.extension.findFieldGetValue
 import com.freegang.extension.findMethodInvoke
-import com.ss.android.ugc.aweme.video.simplayer.ISimPlayer
 import io.github.xpler.core.findClass
 import io.github.xpler.core.XplerLog
 import io.github.xpler.core.lparam
@@ -20,8 +19,17 @@ object SpeedPlayHelper {
         runCatching {
             val helperClazz = lparam.findClass("X.0BRk") ?: return@runCatching // future
             val helper = helperClazz.findFieldGetValue<Any> { type(helperClazz) }
-            val simPlayer = helper?.findMethodInvoke<ISimPlayer> { returnType(ISimPlayer::class.java) }
-            simPlayer?.setSpeed(speed)
+            // ISimPlayer 在 40.6.0 已不存在，改为按返回类型名反射查找，避免类加载失败
+            val simPlayer = helper?.javaClass?.methods
+                ?.firstOrNull { it.parameterTypes.isEmpty() && it.returnType.name.endsWith("ISimPlayer") }
+                ?.invoke(helper)
+            val setSpeed = simPlayer?.javaClass?.methods
+                ?.firstOrNull {
+                    it.name == "setSpeed" &&
+                        it.parameterTypes.size == 1 &&
+                        it.parameterTypes[0] == Float::class.javaPrimitiveType
+                }
+            setSpeed?.invoke(simPlayer, speed)
         }.onFailure {
             XplerLog.e(it)
         }

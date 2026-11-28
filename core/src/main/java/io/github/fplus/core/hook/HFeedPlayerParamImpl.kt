@@ -1,38 +1,16 @@
 package io.github.fplus.core.hook
 
-import com.freegang.extension.asOrNull
 import io.github.fplus.core.base.BaseHook
-import io.github.xpler.core.entity.EmptyHook
-import io.github.xpler.core.hookClass
-import io.github.xpler.core.lparam
+import io.github.xpler.core.entity.NoneHook
 
+/**
+ * 旧版播放状态参数（FeedPlayingParam / FeedPausePlayParam / FeedPlayProgressParam）。
+ *
+ * 40.6.0 已删除这三个类，播放状态改由 [HPlayerController] 直接 hook
+ * `PMPlayListenerDispatcherV2`，这里不再挂载任何逻辑。
+ */
 class HFeedPlayerView : BaseHook() {
     override fun setTargetClass(): Class<*> {
-        return EmptyHook::class.java
-    }
-
-    override fun onInit() {
-        lparam.hookClass("com.ss.android.ugc.aweme.feed.model.FeedPlayingParam")
-            .constructorAll {
-                onAfter {
-                    HPlayerController.playingAid = args.firstOrNull()?.asOrNull()
-                    HPlayerController.isPlaying = true
-                }
-            }
-
-        lparam.hookClass("com.ss.android.ugc.aweme.feed.model.FeedPausePlayParam")
-            .constructorAll {
-                onAfter {
-                    HPlayerController.playingAid = args.firstOrNull()?.asOrNull()
-                    HPlayerController.isPlaying = false
-                }
-            }
-
-        lparam.hookClass("com.ss.android.ugc.aweme.feed.model.FeedPlayProgressParam")
-            .constructorAll {
-                onAfter {
-                    HPlayerController.isPlaying = true
-                }
-            }
+        return NoneHook::class.java
     }
 }

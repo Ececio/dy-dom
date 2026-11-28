@@ -8,19 +8,30 @@ import io.github.xpler.core.proxy.MethodParam
 /**
  * 屏蔽抖音自带的直播长按菜单。
  *
- * 直播间的长按菜单最终都会走 LivePlayFragment#showDouyinHotsoonDislikeMenu,
- * 新版走 IHostBusiness.showLongPressPanel, 旧版走 showOldLongPressPanel(DislikeOptionsBottomDialog)，
- * 在这里拦截后，上半部分长按只会弹出模块自己的窗口。
+ * 40.6.0 中 LivePlayFragmentV2 已没有 showDouyinHotsoonDislikeMenu，
+ * 长按菜单统一由 `com.bytedance.android.livesdk.dislike.DislikeOptionsBottomDialog`
+ * （DialogFragment）展示，新旧两种面板样式都走这个弹窗。
+ *
+ * 这里 hook DialogFragment#onStart，只拦截该类，并在 onStart 中直接返回，
+ * 使弹窗永远不会显示；其它 DialogFragment 不受影响。
  */
 class HLiveLongPressMenu : BaseHook() {
-    override fun setTargetClass(): Class<*> {
-        return findClass("com.bytedance.android.livesdk.chatroom.LivePlayFragment")
+    companion object {
+        private const val DISLIKE_DIALOG = "com.bytedance.android.livesdk.dislike.DislikeOptionsBottomDialog"
     }
 
-    @OnBefore("showDouyinHotsoonDislikeMenu")
-    fun showDouyinHotsoonDislikeMenuBefore(params: MethodParam) {
+    override fun setTargetClass(): Class<*> {
+        return findClass("androidx.fragment.app.DialogFragment")
+    }
+
+    @OnBefore("onStart")
+    fun onStartBefore(params: MethodParam) {
         hookBlockRunning(params) {
+            val className = thisObject?.javaClass?.name ?: return@hookBlockRunning
+            if (className != DISLIKE_DIALOG) return@hookBlockRunning
             if (!HLiveLongPress.shouldBlockNativeMenu()) return@hookBlockRunning
+
+            // 跳过 DialogFragment.onStart -> mDialog.show()
             setResultVoid()
         }.onFailure {
             XplerLog.e(it)
