@@ -88,6 +88,9 @@ class HLongPressLayout : BaseHook() {
                     lastTouchDown = System.currentTimeMillis()
                     // 按下时就能确定模块菜单是否会弹出，提前标记以便关闭原生菜单
                     suppressNativeMenu = shouldShowOptionsMenu(event)
+                    // 40.6.0：原生菜单由 LongPressLayout 自己的 longPressRunnable 触发，
+                    // 在会弹出模块菜单的手势里直接移除它，避免两套菜单同时出现
+                    if (suppressNativeMenu) cancelNativeLongPress(thisView)
                 }
 
                 MotionEvent.ACTION_UP -> {
@@ -129,6 +132,28 @@ class HLongPressLayout : BaseHook() {
 
     private fun isMoved(event: MotionEvent): Boolean {
         return Math.abs(touchDownX - event.x) > 10 || Math.abs(touchDownY - event.y) > 10
+    }
+
+    /**
+     * 取消原生 LongPressLayout 已经排队的 longPressRunnable。
+     *
+     * 40.6.0 的原生菜单不再经过 LongPressEvent，而是由 LongPressLayout 内部的
+     * longPressRunnable 直接触发。该 runnable 通过
+     * com.ss.android.cloudcontrol.library.utils.Worker 投递，
+     * Worker.LIZ(Runnable) 等价于 removeCallbacks。
+     */
+    private fun cancelNativeLongPress(layout: View) {
+        runCatching {
+            val nativeRunnable = layout.findFieldGetValue<Runnable> { name("longPressRunnable") } ?: return
+            val workerClass = Class.forName(
+                "com.ss.android.cloudcontrol.library.utils.Worker",
+                false,
+                layout.javaClass.classLoader,
+            )
+            workerClass.getDeclaredMethod("LIZ", Runnable::class.java).invoke(null, nativeRunnable)
+        }.onFailure {
+            XplerLog.e(it)
+        }
     }
 
     private fun onClick(view: View, event: MotionEvent) {
