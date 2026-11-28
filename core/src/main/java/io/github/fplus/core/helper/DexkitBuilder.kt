@@ -469,33 +469,20 @@ object DexkitBuilder {
             tabLandingClazz = tabLanding.instance("tabLanding")
 
 
-            //
-            // by using string
-            val findMaps = bridge.batchFindClassUsingStrings {
-                addSearchGroup {
-                    groupName = "detailPageFragment"
-                    usingStrings = listOf(
-                        "a1128.b7947",
-                        "com/ss/android/ugc/aweme/detail/ui/DetailPageFragment",
-                        "DetailActOtherNitaView",
-                    )
-                }
-
-                addSearchGroup {
-                    groupName = "feedAvatarPresenter"
-                    usingStrings = listOf(
-                        "com/ss/android/ugc/aweme/feed/quick/presenter/FeedAvatarPresenter",
-                        "当前无网络，暂不可用",
-                        "follow",
-                        "click_hea",
-                    )
+            // 40.6.0：DetailPageFragment / FeedAvatarPresenter 类名均未混淆，
+            // 旧的字符串组合（a1128.b7947 等）已随版本失效，直接按类名定位
+            val detailPageFragment = bridge.findClass {
+                matcher {
+                    className = "com.ss.android.ugc.aweme.detail.ui.DetailPageFragment"
                 }
             }
-
-            val detailPageFragment = findMaps["detailPageFragment"]
             detailPageFragmentClazz = detailPageFragment.instance("detailPageFragment")
 
-            val feedAvatarPresenter = findMaps["feedAvatarPresenter"]
+            val feedAvatarPresenter = bridge.findClass {
+                matcher {
+                    className = "com.ss.android.ugc.aweme.feed.quick.presenter.FeedAvatarPresenter"
+                }
+            }
             feedAvatarPresenterClazz = feedAvatarPresenter.instance("feedAvatarPresenter")
         }
     }

@@ -44,6 +44,17 @@ import io.github.xpler.core.thisView
 
 
 class HLongPressLayout : BaseHook() {
+    companion object {
+        /**
+         * 40.6.0：原生长按菜单改为 LongPressPanelFragmentImpl，
+         * 旧版用于拦截原生长按的 LongPressEvent 类已不存在。
+         * 这里在按下时记录“模块菜单是否会弹出”，供 [HFeedLongPressPanel]
+         * 在原生面板启动时决定是否直接关闭，避免两个菜单同时出现。
+         */
+        @Volatile
+        var suppressNativeMenu: Boolean = false
+    }
+
     private val config
         get() = ConfigV1.get()
 
@@ -75,6 +86,8 @@ class HLongPressLayout : BaseHook() {
                     touchDownX = event.x
                     touchDownY = event.y
                     lastTouchDown = System.currentTimeMillis()
+                    // 按下时就能确定模块菜单是否会弹出，提前标记以便关闭原生菜单
+                    suppressNativeMenu = shouldShowOptionsMenu(event)
                 }
 
                 MotionEvent.ACTION_UP -> {
@@ -82,6 +95,7 @@ class HLongPressLayout : BaseHook() {
                         handler.removeCallbacks(it)
                         longPressRunnable = null
                     }
+                    suppressNativeMenu = false
 
                     if (System.currentTimeMillis() - lastTouchDown < LONG_PRESS_TIME) {
                         // onClick(thisView,event)
@@ -103,6 +117,7 @@ class HLongPressLayout : BaseHook() {
                             handler.removeCallbacks(it)
                             longPressRunnable = null
                         }
+                        suppressNativeMenu = false
                     }
                 }
             }
@@ -136,19 +151,33 @@ class HLongPressLayout : BaseHook() {
         if (event.x < screenSize.width / 8 || event.x > screenSize.width - screenSize.width / 8)
             return
 
-        if (!config.isNeatMode)
+        if (!shouldShowOptionsMenu(event))
             return
 
-        if (!config.longPressMode) {
-            if (event.y < screenSize.height / 2)
-                return
-        } else {
-            if (event.y > screenSize.height / 2)
-                return
-        }
+        // 40.6.0：原来记录 Aweme 的 LongPressEvent 已删除，改为使用当前 VideoViewHolder 的 Aweme
+        aweme = HVideoViewHolder.aweme
 
         val holderRootView = view.firstParentOrNull(VideoViewHolderRootView::class.java) ?: return
         showOptionsMenu(holderRootView)
+    }
+
+    /**
+     * 模块长按菜单是否应该在此位置弹出。
+     * 与旧版 LongPressEvent 的拦截区域保持一致：
+     * 普通模式只在下半屏响应，长按直播上半部分开启时只在上半屏响应。
+     */
+    private fun shouldShowOptionsMenu(event: MotionEvent): Boolean {
+        if (!config.isNeatMode)
+            return false
+
+        if (event.x < screenSize.width / 8 || event.x > screenSize.width - screenSize.width / 8)
+            return false
+
+        return if (!config.longPressMode) {
+            event.y > screenSize.height / 2
+        } else {
+            event.y < screenSize.height / 2
+        }
     }
 
     private fun showOptionsMenu(view: ViewGroup) {
